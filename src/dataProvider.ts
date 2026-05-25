@@ -77,8 +77,8 @@ const USER_QUERY = `
 `;
 
 const PRODUCTS_QUERY = `
-    query GetProducts($first: Int, $after: String) {
-        products(categoryId: "${PRODUCTS_CATEGORY_ID}", pagination: { first: $first, after: $after }) {
+    query GetProducts($first: Int, $after: String, $categoryId: ID) {
+        products(categoryId: $categoryId, pagination: { first: $first, after: $after }) {
             edges {
                 node {
                     id
@@ -177,6 +177,44 @@ const DELETE_USER_MUTATION = `
     }
 `;
 
+const CREATE_PRODUCT_MUTATION = `
+    mutation CreateProduct($input: CreateProductInput!) {
+        createProduct(input: $input) {
+            id
+            name
+            description
+            price
+            sku
+            stock
+            images
+            createdAt
+            updatedAt
+        }
+    }
+`;
+
+const DELETE_PRODUCT_MUTATION = `
+    mutation DeleteProduct($id: ID!) {
+        deleteProduct(id: $id)
+    }
+`;
+
+const UPDATE_PRODUCT_MUTATION = `
+    mutation UpdateProduct($id: ID!, $input: UpdateProductInput!) {
+        updateProduct(id: $id, input: $input) {
+            id
+            name
+            description
+            price
+            sku
+            stock
+            images
+            createdAt
+            updatedAt
+        }
+    }
+`;
+
 const CREATE_CATEGORY_MUTATION = `
     mutation CreateCategory($input: CreateCategoryInput!) {
         createCategory(input: $input) {
@@ -206,6 +244,10 @@ const fetchCategories = async (): Promise<any[]> => {
 
 export const clearCategoriesCache = () => {
     categoriesFetched = false;
+};
+
+export const clearProductsCache = () => {
+    delete cursorCache['products'];
 };
 
 const getCursorForPage = (resource: string, page: number): string | undefined => {
@@ -291,7 +333,8 @@ const resourceMap: Record<string, ResourceConfig> = {
 
     products: {
         getList: async ({ first, after, page, filter }) => {
-            const res = await gqlFetch(PRODUCTS_QUERY, { first, after });
+            const categoryId = filter?.categoryId || undefined;
+            const res = await gqlFetch(PRODUCTS_QUERY, { first, after, categoryId });
             const edges = res.products.edges ?? [];
             const pageInfo = res.products.pageInfo ?? {};
             let data: any[] = edges.map((e: any) => normaliseProduct(e.node));
@@ -314,6 +357,45 @@ const resourceMap: Record<string, ResourceConfig> = {
         getOne: async (id) => {
             const res = await gqlFetch(PRODUCT_QUERY, { id: String(id) });
             return { data: normaliseProduct(res.product) };
+        },
+        create: async (data) => {
+            const input: Record<string, any> = {
+                name: data.name,
+                slug: data.slug,
+                description: data.description,
+                sku: data.sku,
+                price: parseFloat(data.price),
+                stock: parseInt(data.stock, 10),
+                categoryId: data.categoryId || PRODUCTS_CATEGORY_ID,
+                status: data.status || 'active',
+                ...(data.shortDescription ? { shortDescription: data.shortDescription } : {}),
+                ...(data.brand ? { brand: data.brand } : {}),
+                ...(data.tags ? { tags: Array.isArray(data.tags) ? data.tags : data.tags.split(',').map((t: string) => t.trim()).filter(Boolean) } : {}),
+            };
+            const res = await gqlFetch(CREATE_PRODUCT_MUTATION, { input });
+            return { data: normaliseProduct(res.createProduct) };
+        },
+        update: async (id, data) => {
+            const input: Record<string, any> = {
+                name: data.name,
+                slug: data.slug,
+                description: data.description || ' ',
+                sku: data.sku || `${data.slug}-${Date.now()}`,
+                price: parseFloat(data.price) || 0,
+                stock: parseInt(data.stock, 10) || 0,
+                categoryId: data.categoryId,
+                status: data.status || 'active',
+                ...(data.shortDescription ? { shortDescription: data.shortDescription } : {}),
+                ...(data.brand ? { brand: data.brand } : {}),
+                ...(data.tags ? { tags: Array.isArray(data.tags) ? data.tags : data.tags.split(',').map((t: string) => t.trim()).filter(Boolean) } : {}),
+            };
+            const res = await gqlFetch(UPDATE_PRODUCT_MUTATION, { id: String(id), input });
+            return { data: normaliseProduct(res.updateProduct) };
+        },
+        delete: async (id) => {
+            // deleteProduct returns Boolean!, not an object — return synthesised record
+            await gqlFetch(DELETE_PRODUCT_MUTATION, { id: String(id) });
+            return { data: { id } };
         },
     },
 

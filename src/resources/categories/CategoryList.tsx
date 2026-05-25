@@ -49,6 +49,7 @@ const UPDATE_CATEGORY_MUTATION = `
             name
             slug
             description
+            imageUrl
         }
     }
 `;
@@ -101,6 +102,7 @@ const CategoryEditDialog = ({ open, record, onClose }: EditDialogProps) => {
     const notify = useNotify();
     const refresh = useRefresh();
     const [loading, setLoading] = useState(false);
+    const [imageFile, setImageFile] = useState<File | null>(null);
     const [form, setForm] = useState({
         name: record?.name ?? "",
         slug: record?.slug ?? "",
@@ -118,6 +120,7 @@ const CategoryEditDialog = ({ open, record, onClose }: EditDialogProps) => {
                 sortOrder: record.sortOrder ?? 0,
                 isActive: record.isActive ?? true,
             });
+            setImageFile(null);
         }
     }, [record?.id]);
 
@@ -134,27 +137,39 @@ const CategoryEditDialog = ({ open, record, onClose }: EditDialogProps) => {
         setLoading(true);
         try {
             const token = localStorage.getItem("access_token");
-            const response = await fetch(GQL_URL, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "ngrok-skip-browser-warning": "true",
-                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-                },
-                body: JSON.stringify({
-                    query: UPDATE_CATEGORY_MUTATION,
-                    variables: {
-                        id: record.id,
-                        input: {
-                            name: form.name,
-                            slug: form.slug,
-                            sortOrder: Number(form.sortOrder),
-                            isActive: form.isActive,
-                            ...(form.description ? { description: form.description } : {}),
-                        },
-                    },
-                }),
+            const inputPayload: any = {
+                name: form.name,
+                slug: form.slug,
+                sortOrder: Number(form.sortOrder),
+                isActive: form.isActive,
+                ...(form.description ? { description: form.description } : {}),
+                ...(imageFile ? { image: null } : {}),
+            };
+
+            const operations = JSON.stringify({
+                query: UPDATE_CATEGORY_MUTATION,
+                variables: { id: record.id, input: inputPayload },
             });
+
+            const headers: Record<string, string> = {
+                "ngrok-skip-browser-warning": "true",
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            };
+
+            let body: FormData | string;
+            if (imageFile) {
+                const map = JSON.stringify({ "0": ["variables.input.image"] });
+                const formData = new FormData();
+                formData.append("operations", operations);
+                formData.append("map", map);
+                formData.append("0", imageFile);
+                body = formData;
+            } else {
+                headers["Content-Type"] = "application/json";
+                body = operations;
+            }
+
+            const response = await fetch(GQL_URL, { method: "POST", headers, body });
             const json = await response.json();
             if (json.errors?.length) throw new Error(json.errors[0].message);
             clearCategoriesCache();
@@ -190,12 +205,31 @@ const CategoryEditDialog = ({ open, record, onClose }: EditDialogProps) => {
                         rows={3}
                         fullWidth
                     />
-                    {record?.imageUrl && (
+                    {(record?.imageUrl || imageFile) && (
                         <Box>
                             <Typography variant="body2" gutterBottom>Current Image</Typography>
-                            <Avatar src={record.imageUrl} variant="rounded" sx={{ width: 64, height: 64, borderRadius: "8px" }} />
+                            <Avatar
+                                src={imageFile ? URL.createObjectURL(imageFile) : record.imageUrl}
+                                variant="rounded"
+                                sx={{ width: 64, height: 64, borderRadius: "8px" }}
+                            />
                         </Box>
                     )}
+                    <Box>
+                        <Typography variant="body2" gutterBottom>
+                            {record?.imageUrl ? "Replace Image (optional)" : "Image (optional)"}
+                        </Typography>
+                        <input
+                            type="file"
+                            accept="image/*"
+                            onChange={e => setImageFile(e.target.files?.[0] ?? null)}
+                        />
+                        {imageFile && (
+                            <Typography variant="caption" display="block" mt={0.5}>
+                                Selected: {imageFile.name}
+                            </Typography>
+                        )}
+                    </Box>
                     <MuiTextField
                         label="Sort Order"
                         type="number"
@@ -260,6 +294,7 @@ const AddSubcategoryDialog = ({ open, parentId, parentName, onClose }: AddSubcat
     const notify = useNotify();
     const refresh = useRefresh();
     const [loading, setLoading] = useState(false);
+    const [imageFile, setImageFile] = useState<File | null>(null);
     const [form, setForm] = useState({ name: "", slug: "", description: "", sortOrder: 0, isActive: true });
 
     const handleChange =
@@ -269,6 +304,7 @@ const AddSubcategoryDialog = ({ open, parentId, parentName, onClose }: AddSubcat
 
     const handleClose = () => {
         setForm({ name: "", slug: "", description: "", sortOrder: 0, isActive: true });
+        setImageFile(null);
         onClose();
     };
 
@@ -280,27 +316,40 @@ const AddSubcategoryDialog = ({ open, parentId, parentName, onClose }: AddSubcat
         setLoading(true);
         try {
             const token = localStorage.getItem("access_token");
-            const response = await fetch(GQL_URL, {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "ngrok-skip-browser-warning": "true",
-                    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-                },
-                body: JSON.stringify({
-                    query: CREATE_CATEGORY_MUTATION,
-                    variables: {
-                        input: {
-                            name: form.name,
-                            slug: form.slug,
-                            parentId,
-                            SortOrder: form.sortOrder,
-                            IsActive: form.isActive,
-                            ...(form.description ? { description: form.description } : {}),
-                        },
-                    },
-                }),
+            const inputPayload: any = {
+                name: form.name,
+                slug: form.slug,
+                parentId,
+                SortOrder: form.sortOrder,
+                IsActive: form.isActive,
+                ...(form.description ? { description: form.description } : {}),
+                ...(imageFile ? { image: null } : {}),
+            };
+
+            const operations = JSON.stringify({
+                query: CREATE_CATEGORY_MUTATION,
+                variables: { input: inputPayload },
             });
+
+            const headers: Record<string, string> = {
+                "ngrok-skip-browser-warning": "true",
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            };
+
+            let body: FormData | string;
+            if (imageFile) {
+                const map = JSON.stringify({ "0": ["variables.input.image"] });
+                const formData = new FormData();
+                formData.append("operations", operations);
+                formData.append("map", map);
+                formData.append("0", imageFile);
+                body = formData;
+            } else {
+                headers["Content-Type"] = "application/json";
+                body = operations;
+            }
+
+            const response = await fetch(GQL_URL, { method: "POST", headers, body });
             const json = await response.json();
             if (json.errors?.length) throw new Error(json.errors[0].message);
             clearCategoriesCache();
@@ -341,6 +390,19 @@ const AddSubcategoryDialog = ({ open, parentId, parentName, onClose }: AddSubcat
                         rows={2}
                         fullWidth
                     />
+                    <Box>
+                        <Typography variant="body2" gutterBottom>Image (optional)</Typography>
+                        <input
+                            type="file"
+                            accept="image/*"
+                            onChange={e => setImageFile(e.target.files?.[0] ?? null)}
+                        />
+                        {imageFile && (
+                            <Typography variant="caption" display="block" mt={0.5}>
+                                Selected: {imageFile.name}
+                            </Typography>
+                        )}
+                    </Box>
                     <MuiTextField
                         label="Sort Order"
                         type="number"
