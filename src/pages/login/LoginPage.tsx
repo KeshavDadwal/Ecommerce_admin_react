@@ -6,8 +6,8 @@ import { Input } from '@/components/ui/input';
 
 export const LoginPage = () => {
     const { mutate: login, isPending: isLoading } = useLogin();
-    const [email, setEmail] = useState('');
-    const [password, setPassword] = useState('');
+    const [email, setEmail] = useState('admin@ecomm.com');
+    const [password, setPassword] = useState('admin123');
     const [error, setError] = useState('');
 
     const handleSubmit = (e: React.FormEvent) => {
