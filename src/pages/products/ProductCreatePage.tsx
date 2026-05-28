@@ -122,17 +122,13 @@ export const ProductCreatePage = () => {
                 isActive: v.isActive,
                 ...(v.compareAtPrice ? { compareAtPrice: parseFloat(v.compareAtPrice) } : {}),
                 ...(v.costPrice ? { costPrice: parseFloat(v.costPrice) } : {}),
-                ...(v.options.trim() ? { options: v.options.trim() } : {}),
+
             })),
         };
 
-        // DEBUG — remove once variants are confirmed working
-        console.log('📦 CreateProduct payload:', JSON.stringify(mutationInput, null, 2));
-        console.log(`📦 Sending ${mutationInput.variants.length} variant(s):`, mutationInput.variants);
 
         try {
-            const result = await createProduct({ variables: { input: mutationInput } });
-            console.log('✅ createProduct result:', result);
+            await createProduct({ variables: { input: mutationInput } });
             navigate('/products');
         } catch (err: any) {
             // Show the actual GraphQL / network error to the user
@@ -316,15 +312,7 @@ export const ProductCreatePage = () => {
                                                     className="bg-white"
                                                 />
                                             </div>
-                                            <div className="space-y-1.5">
-                                                <label className="text-xs font-medium text-gray-600">Options</label>
-                                                <Input
-                                                    value={variant.options}
-                                                    onChange={handleVariantChange(index, 'options')}
-                                                    placeholder='{"size":"XL"}'
-                                                    className="bg-white"
-                                                />
-                                            </div>
+                                            {/* Options field hidden — backend bug causes silent variant drop when options is sent */}
                                             <div className="space-y-1.5">
                                                 <label className="text-xs font-medium text-gray-600">
                                                     Price <span className="text-red-500">*</span>

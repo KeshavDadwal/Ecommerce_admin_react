@@ -1,10 +1,7 @@
 import { ApolloClient, InMemoryCache, createHttpLink, from, ApolloLink } from '@apollo/client';
 
 const httpLink = createHttpLink({
-    uri: '/graphql',
-    headers: {
-        'ngrok-skip-browser-warning': 'true',
-    },
+    uri: `${import.meta.env.VITE_API_URL}/graphql`,
 });
 
 const authLink = new ApolloLink((operation, forward) => {
