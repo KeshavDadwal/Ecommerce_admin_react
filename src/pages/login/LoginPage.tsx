@@ -3,7 +3,6 @@ import { useLogin } from '@refinedev/core';
 import { Package } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { cn } from '@/lib/utils';
 
 export const LoginPage = () => {
     const { mutate: login, isPending: isLoading } = useLogin();
