@@ -12,6 +12,7 @@ import { ProductCreatePage } from "./pages/products/ProductCreatePage";
 import { ProductEditPage } from "./pages/products/ProductEditPage";
 import { CategoriesPage } from "./pages/categories/CategoriesPage";
 import { CategoryCreatePage } from "./pages/categories/CategoryCreatePage";
+import { InventoryPage } from "./pages/inventory/InventoryPage";
 
 const App = () => {
     return (
@@ -24,6 +25,7 @@ const App = () => {
                     { name: "users", list: "/users", show: "/users/:id" },
                     { name: "products", list: "/products", create: "/products/create", edit: "/products/:id/edit" },
                     { name: "categories", list: "/categories", create: "/categories/create" },
+                    { name: "inventory", list: "/inventory" },
                 ]}
                 options={{ disableTelemetry: true }}
             >
@@ -38,6 +40,7 @@ const App = () => {
                         <Route path="/products/:id/edit" element={<ProductEditPage />} />
                         <Route path="/categories" element={<CategoriesPage />} />
                         <Route path="/categories/create" element={<CategoryCreatePage />} />
+                        <Route path="/inventory" element={<InventoryPage />} />
                         <Route path="*" element={<Navigate to="/" />} />
                     </Route>
                 </Routes>

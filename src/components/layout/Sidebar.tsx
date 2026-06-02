@@ -7,6 +7,7 @@ import {
     LogOut,
     LayoutDashboard,
     ChevronRight,
+    Boxes,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -18,6 +19,7 @@ const navItems = [
     { label: 'Users', icon: Users, path: '/users' },
     { label: 'Products', icon: Package, path: '/products' },
     { label: 'Categories', icon: Tag, path: '/categories' },
+    { label: 'Inventory', icon: Boxes, path: '/inventory' },
 ];
 
 export const Sidebar = () => {

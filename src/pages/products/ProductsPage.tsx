@@ -1,31 +1,48 @@
-import { useState } from 'react';
-import { useQuery } from '@apollo/client/react';
+import { useState, useCallback } from 'react';
+import { useQuery, useLazyQuery } from '@apollo/client/react';
 import { gql } from '@apollo/client';
-import { Search, Plus, Package } from 'lucide-react';
+import { Search, Plus, Package, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 
+const PAGE_SIZE = 25;
+
 const GET_PRODUCTS = gql`
-    query GetProducts($first: Int, $after: String, $categoryId: ID) {
-        products(categoryId: $categoryId, pagination: { first: $first, after: $after }) {
+    query GetProducts($first: Int, $after: String, $before: String, $last: Int) {
+        products(pagination: { first: $first, after: $after, before: $before, last: $last }) {
             edges {
                 node {
                     id
                     name
                     description
                     createdAt
-                    updatedAt
-                    variants {
-                        id
-                    }
+                    variants { id }
                 }
             }
             pageInfo {
                 hasNextPage
+                hasPreviousPage
+                startCursor
                 endCursor
+            }
+        }
+    }
+`;
+
+const SEARCH_PRODUCTS = gql`
+    query SearchProducts($query: String!, $first: Int) {
+        searchProducts(query: $query, pagination: { first: $first }) {
+            edges {
+                node {
+                    id
+                    name
+                    description
+                    createdAt
+                    variants { id }
+                }
             }
         }
     }
@@ -34,18 +51,49 @@ const GET_PRODUCTS = gql`
 export const ProductsPage = () => {
     const navigate = useNavigate();
     const [search, setSearch] = useState('');
-    const [cursor, setCursor] = useState<string | null>(null);
+    const [cursors, setCursors] = useState<string[]>([]); // stack of startCursors for prev
+    const [afterCursor, setAfterCursor] = useState<string | null>(null);
 
+    // Main paginated query
     const { data, loading, error } = useQuery(GET_PRODUCTS, {
-        variables: { first: 25, after: cursor },
+        variables: { first: PAGE_SIZE, after: afterCursor },
+        skip: search.trim().length > 0,
     });
 
-    const products = (data as any)?.products?.edges?.map((e: any) => e.node) ?? [];
-    const pageInfo = (data as any)?.products?.pageInfo;
+    // Search query
+    const [runSearch, { data: searchData, loading: searchLoading }] = useLazyQuery(SEARCH_PRODUCTS);
 
-    const filtered = products.filter((p: any) =>
-        search === '' || p.name?.toLowerCase().includes(search.toLowerCase())
-    );
+    const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+        const val = e.target.value;
+        setSearch(val);
+        if (val.trim().length > 1) {
+            runSearch({ variables: { query: val.trim(), first: 50 } });
+        }
+    }, [runSearch]);
+
+    const isSearching = search.trim().length > 1;
+    const products = isSearching
+        ? (searchData as any)?.searchProducts?.edges?.map((e: any) => e.node) ?? []
+        : (data as any)?.products?.edges?.map((e: any) => e.node) ?? [];
+    const pageInfo = (data as any)?.products?.pageInfo;
+    const isLoading = isSearching ? searchLoading : loading;
+
+    const goNext = () => {
+        if (!pageInfo?.endCursor) return;
+        setCursors(prev => [...prev, pageInfo.startCursor]);
+        setAfterCursor(pageInfo.endCursor);
+    };
+
+    const goPrev = () => {
+        const prev = [...cursors];
+        const startCursor = prev.pop();
+        setCursors(prev);
+        // go back: use the previous startCursor as "after" offset
+        // simplest: if stack empty go to first page
+        setAfterCursor(prev.length > 0 ? cursors[cursors.length - 1] : null);
+    };
+
+    const currentPage = cursors.length + 1;
 
     return (
         <div className="p-8">
@@ -70,9 +118,17 @@ export const ProductsPage = () => {
                 <Input
                     placeholder="Search products..."
                     value={search}
-                    onChange={e => setSearch(e.target.value)}
+                    onChange={handleSearchChange}
                     className="pl-9"
                 />
+                {isSearching && (
+                    <button
+                        onClick={() => setSearch('')}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs"
+                    >
+                        Clear
+                    </button>
+                )}
             </div>
 
             {/* Table */}
@@ -88,7 +144,7 @@ export const ProductsPage = () => {
                         </tr>
                     </thead>
                     <tbody>
-                        {loading && Array.from({ length: 6 }).map((_, i) => (
+                        {isLoading && Array.from({ length: 6 }).map((_, i) => (
                             <tr key={i} className="border-b border-gray-50">
                                 {Array.from({ length: 5 }).map((_, j) => (
                                     <td key={j} className="px-6 py-4">
@@ -106,24 +162,22 @@ export const ProductsPage = () => {
                             </tr>
                         )}
 
-                        {!loading && filtered.length === 0 && (
+                        {!isLoading && products.length === 0 && (
                             <tr>
                                 <td colSpan={5} className="px-6 py-12 text-center">
                                     <div className="flex flex-col items-center gap-2 text-gray-400">
                                         <Package className="w-8 h-8" />
-                                        <p>No products found</p>
+                                        <p>{isSearching ? `No results for "${search}"` : 'No products found'}</p>
                                     </div>
                                 </td>
                             </tr>
                         )}
 
-                        {filtered.map((product: any) => {
+                        {products.map((product: any) => {
                             const variantCount = product.variants?.length ?? 0;
                             return (
                                 <tr key={product.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
-                                    <td className="px-6 py-4 font-medium text-gray-900">
-                                        {product.name}
-                                    </td>
+                                    <td className="px-6 py-4 font-medium text-gray-900">{product.name}</td>
                                     <td className="px-6 py-4 text-gray-500 max-w-xs truncate">
                                         {product.description || '—'}
                                     </td>
@@ -157,15 +211,32 @@ export const ProductsPage = () => {
                     </tbody>
                 </table>
 
-                {pageInfo?.hasNextPage && (
-                    <div className="px-6 py-4 border-t border-gray-100 flex justify-end">
-                        <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setCursor(pageInfo.endCursor)}
-                        >
-                            Load more
-                        </Button>
+                {/* Pagination — only shown when not searching */}
+                {!isSearching && (pageInfo?.hasNextPage || pageInfo?.hasPreviousPage || currentPage > 1) && (
+                    <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between">
+                        <p className="text-xs text-gray-500">Page {currentPage}</p>
+                        <div className="flex items-center gap-2">
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={goPrev}
+                                disabled={currentPage === 1}
+                                className="gap-1.5"
+                            >
+                                <ChevronLeft className="w-3.5 h-3.5" />
+                                Previous
+                            </Button>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={goNext}
+                                disabled={!pageInfo?.hasNextPage}
+                                className="gap-1.5"
+                            >
+                                Next
+                                <ChevronRight className="w-3.5 h-3.5" />
+                            </Button>
+                        </div>
                     </div>
                 )}
             </div>

@@ -16,9 +16,19 @@ const GET_CATEGORIES = gql`
 `;
 
 const CREATE_PRODUCT = gql`
-    mutation CreateProduct($input: CreateProductInput!) {
-        createProduct(input: $input) { id name }
+  mutation CreateProduct($input: CreateProductInput!) {
+    createProduct(input: $input) {
+      id
     }
+  }
+`;
+
+const CREATE_VARIANT = gql`
+  mutation CreateVariant($input: CreateVariantInput!) {
+    createVariant(input: $input) {
+      id
+    }
+  }
 `;
 
 interface Variant {
@@ -55,6 +65,7 @@ export const ProductCreatePage = () => {
     const { data: categoriesData } = useQuery(GET_CATEGORIES);
     const categories = (categoriesData as any)?.categories?.edges?.map((e: any) => e.node) ?? [];
     const [createProduct, { loading }] = useMutation(CREATE_PRODUCT);
+    const [createVariant] = useMutation(CREATE_VARIANT);
 
     const toSlug = (str: string) =>
         str.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -102,43 +113,103 @@ export const ProductCreatePage = () => {
             return;
         }
 
-        const mutationInput = {
+        // Build payload — only send fields that the backend handles correctly.
+        // Extra fields (attributes, options, compareAtPrice, costPrice) were found to cause
+        // variants to be silently dropped. Add them back once the backend is fixed.
+        const mutationInput: Record<string, unknown> = {
             name: form.name.trim(),
             slug: form.slug.trim(),
-            description: form.description.trim(),
-            shortDescription: form.shortDescription.trim() || '',
+            description: form.description.trim() || ' ',
             categoryId: form.categoryId,
-            status: form.status,
-            ...(form.brand.trim() ? { brand: form.brand.trim() } : {}),
-            ...(form.attributes.trim() ? { attributes: form.attributes.trim() } : {}),
-            ...(form.tags.trim()
-                ? { tags: form.tags.split(',').map(t => t.trim()).filter(Boolean) }
-                : {}),
-            variants: validVariants.map(v => ({
-                sku: v.sku.trim(),
-                name: v.name.trim(),
-                price: parseFloat(v.price) || 0,
-                weightGrams: parseInt(v.weightGrams) || 0,
-                isActive: v.isActive,
-                ...(v.compareAtPrice ? { compareAtPrice: parseFloat(v.compareAtPrice) } : {}),
-                ...(v.costPrice ? { costPrice: parseFloat(v.costPrice) } : {}),
-
-            })),
         };
 
-
-        try {
-            await createProduct({ variables: { input: mutationInput } });
-            navigate('/products');
-        } catch (err: any) {
-            // Show the actual GraphQL / network error to the user
-            const message =
-                err?.graphQLErrors?.[0]?.message ??
-                err?.networkError?.result?.errors?.[0]?.message ??
-                err?.message ??
-                'Failed to create product. Please try again.';
-            setSubmitError(message);
+        // Optional fields — add only if filled in, and only safe ones
+        if (form.shortDescription.trim()) mutationInput.shortDescription = form.shortDescription.trim();
+        if (form.status) mutationInput.status = form.status;
+        if (form.brand.trim()) mutationInput.brand = form.brand.trim();
+        if (form.tags.trim()) {
+            mutationInput.tags = form.tags.split(',').map((t: string) => t.trim()).filter(Boolean);
         }
+        // attributes omitted for now — JSON string causes backend to silently drop variants
+        // if (form.attributes.trim()) mutationInput.attributes = form.attributes.trim();
+
+        console.log('📦 Sending payload:', JSON.stringify(mutationInput, null, 2));
+
+
+       try {
+    // 1. Create product FIRST (without variants)
+    const productInput: Record<string, unknown> = {
+        name: form.name.trim(),
+        slug: form.slug.trim(),
+        description: form.description.trim() || ' ',
+        categoryId: form.categoryId,
+    };
+
+    if (form.shortDescription.trim()) {
+        productInput.shortDescription = form.shortDescription.trim();
+    }
+
+    if (form.status) {
+        productInput.status = form.status;
+    }
+
+    if (form.brand.trim()) {
+        productInput.brand = form.brand.trim();
+    }
+
+    if (form.tags.trim()) {
+        productInput.tags = form.tags
+            .split(',')
+            .map((t: string) => t.trim())
+            .filter(Boolean);
+    }
+
+    console.log('📦 Creating product:', productInput);
+
+    const result = await createProduct({
+    variables: {
+        input: productInput,
+    },
+});
+
+const productId = (result.data as any)?.createProduct?.id;
+
+    if (!productId) {
+        throw new Error('Product created but no product ID returned.');
+    }
+
+    console.log('✅ Product created:', productId);
+
+    // 2. Create variants separately
+    for (const variant of validVariants) {
+        const variantInput = {
+            productId,
+            sku: variant.sku.trim(),
+            name: variant.name.trim(),
+            price: parseFloat(variant.price) || 0,
+            weightGrams: parseInt(variant.weightGrams) || 0,
+            isActive: variant.isActive,
+        };
+
+        console.log('📦 Creating variant:', variantInput);
+
+        await createVariant({
+            variables: {
+                input: variantInput,
+            },
+        });
+    }
+
+    navigate('/products');
+} catch (err: any) {
+    const message =
+        err?.graphQLErrors?.[0]?.message ??
+        err?.networkError?.result?.errors?.[0]?.message ??
+        err?.message ??
+        'Failed to create product. Please try again.';
+
+    setSubmitError(message);
+}
     };
 
     return (

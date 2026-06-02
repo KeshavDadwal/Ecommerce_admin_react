@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useMutation, useQuery } from '@apollo/client/react';
 import { gql } from '@apollo/client';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -23,9 +23,14 @@ const GET_PRODUCT = gql`
             name
             description
             category { id name }
-            variants { id }
-            createdAt
-            updatedAt
+            variants {
+                id
+                sku
+                name
+                price
+                weightGrams
+                isActive
+            }
         }
     }
 `;
@@ -36,9 +41,21 @@ const UPDATE_PRODUCT = gql`
     }
 `;
 
+const CREATE_VARIANT = gql`
+    mutation CreateVariant($input: CreateVariantInput!) {
+        createVariant(input: $input) { id sku name price weightGrams isActive }
+    }
+`;
+
+const UPDATE_VARIANT = gql`
+    mutation UpdateVariant($id: ID!, $input: UpdateVariantInput!) {
+        updateVariant(id: $id, input: $input) { id sku name price weightGrams isActive }
+    }
+`;
+
 const DELETE_VARIANT = gql`
     mutation DeleteVariant($id: ID!) {
-        deleteProductVariant(id: $id)
+        deleteVariant(id: $id)
     }
 `;
 
@@ -47,26 +64,30 @@ interface Variant {
     sku: string;
     name: string;
     price: string;
-    compareAtPrice: string;
-    costPrice: string;
     weightGrams: string;
-    options: string;
     isActive: boolean;
     isNew?: boolean;
 }
 
 const emptyVariant = (): Variant => ({
-    sku: '', name: '', price: '', compareAtPrice: '',
-    costPrice: '', weightGrams: '0', options: '', isActive: true, isNew: true,
+    sku: '', name: '', price: '0', weightGrams: '0', isActive: true, isNew: true,
 });
+
+const isVariantValid = (v: Variant) => v.sku.trim() !== '' && v.name.trim() !== '';
+
+const toSlug = (str: string) =>
+    str.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
 export const ProductEditPage = () => {
     const { id } = useParams();
     const navigate = useNavigate();
+    const [submitError, setSubmitError] = useState<string | null>(null);
+    const [saving, setSaving] = useState(false);
 
     const [form, setForm] = useState({
-        name: '', slug: '', description: '', shortDescription: '',
-        brand: '', tags: '', status: 'active', categoryId: '', attributes: '',
+        name: '',
+        description: '',
+        categoryId: '',
     });
     const [variants, setVariants] = useState<Variant[]>([]);
     const [deletedVariantIds, setDeletedVariantIds] = useState<string[]>([]);
@@ -77,45 +98,43 @@ export const ProductEditPage = () => {
     const { data: categoriesData } = useQuery(GET_CATEGORIES);
     const categories = (categoriesData as any)?.categories?.edges?.map((e: any) => e.node) ?? [];
 
-    const [updateProduct, { loading: saving, error: saveError }] = useMutation(UPDATE_PRODUCT);
+    const [updateProduct] = useMutation(UPDATE_PRODUCT);
+    const [createVariant] = useMutation(CREATE_VARIANT);
+    const [updateVariant] = useMutation(UPDATE_VARIANT);
     const [deleteVariant] = useMutation(DELETE_VARIANT);
 
-    // Populate form when product loads
     useEffect(() => {
         const p = (productData as any)?.product;
         if (!p) return;
         setForm({
             name: p.name ?? '',
-            slug: p.slug ?? '',
             description: p.description ?? '',
-            shortDescription: p.shortDescription ?? '',
-            brand: p.brand ?? '',
-            tags: Array.isArray(p.tags) ? p.tags.join(', ') : (p.tags ?? ''),
-            status: p.status ?? 'active',
             categoryId: p.category?.id ?? '',
-            attributes: p.attributes ?? '',
         });
         setVariants((p.variants ?? []).map((v: any) => ({
             id: v.id,
             sku: v.sku ?? '',
             name: v.name ?? '',
-            price: String(v.price ?? ''),
-            compareAtPrice: String(v.compareAtPrice ?? ''),
-            costPrice: String(v.costPrice ?? ''),
+            price: String(v.price ?? '0'),
             weightGrams: String(v.weightGrams ?? '0'),
-            options: v.options ?? '',
             isActive: v.isActive ?? true,
             isNew: false,
         })));
     }, [productData]);
 
-    const handleChange = (field: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+    const handleChange = (field: string) => (
+        e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
+    ) => {
         setForm(prev => ({ ...prev, [field]: e.target.value }));
     };
 
-    const handleVariantChange = (index: number, field: keyof Variant) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleVariantChange = (index: number, field: keyof Variant) => (
+        e: React.ChangeEvent<HTMLInputElement>
+    ) => {
         setVariants(prev => prev.map((v, i) =>
-            i === index ? { ...v, [field]: field === 'isActive' ? e.target.checked : e.target.value } : v
+            i === index
+                ? { ...v, [field]: field === 'isActive' ? (e.target as HTMLInputElement).checked : e.target.value }
+                : v
         ));
     };
 
@@ -125,46 +144,71 @@ export const ProductEditPage = () => {
         setVariants(prev => prev.filter((_, i) => i !== index));
     };
 
+    const validVariants = variants.filter(isVariantValid);
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!form.name || !form.slug || !form.categoryId) return;
-        try {
-            // Delete removed variants first
-            await Promise.all(deletedVariantIds.map(vid => deleteVariant({ variables: { id: vid } })));
+        setSubmitError(null);
+        setSaving(true);
 
+        if (!form.name || !form.categoryId) {
+            setSubmitError('Name and category are required.');
+            setSaving(false);
+            return;
+        }
+
+        try {
+            // 1. Delete removed variants FIRST to avoid duplicate SKU conflicts
+            for (const vid of deletedVariantIds) {
+                await deleteVariant({ variables: { id: vid } });
+            }
+
+            // 2. Update product basic info only (no variants field)
             await updateProduct({
                 variables: {
                     id,
                     input: {
                         name: form.name.trim(),
-                        slug: form.slug.trim(),
-                        description: form.description.trim() || '',
-                        shortDescription: form.shortDescription.trim() || '',
+                        slug: toSlug(form.name.trim()),
+                        description: form.description.trim() || ' ',
                         categoryId: form.categoryId,
-                        status: form.status,
-                        ...(form.brand.trim() ? { brand: form.brand.trim() } : {}),
-                        ...(form.attributes.trim() ? { attributes: form.attributes.trim() } : {}),
-                        ...(form.tags.trim() ? { tags: form.tags.split(',').map(t => t.trim()).filter(Boolean) } : {}),
-                        variants: variants.filter(v => v.sku && v.name && v.price).map(v => ({
-                            ...(v.id && !v.isNew ? { id: v.id } : {}),
-                            sku: v.sku.trim(),
-                            name: v.name.trim(),
-                            price: parseFloat(v.price) || 0,
-                            isActive: v.isActive,
-                            weightGrams: parseInt(v.weightGrams) || 0,
-                            ...(v.compareAtPrice ? { compareAtPrice: parseFloat(v.compareAtPrice) } : {}),
-                            ...(v.costPrice ? { costPrice: parseFloat(v.costPrice) } : {}),
-                            ...(v.options.trim() ? { options: v.options.trim() } : {}),
-                        })),
                     },
                 },
             });
+
+            // 3. Update existing / create new variants sequentially
+            for (const v of validVariants) {
+                const variantInput = {
+                    productId: id,
+                    sku: v.sku.trim(),
+                    name: v.name.trim(),
+                    price: parseFloat(v.price) || 0,
+                    weightGrams: parseInt(v.weightGrams) || 0,
+                    isActive: v.isActive,
+                };
+
+                if (v.id) {
+                    await updateVariant({ variables: { id: v.id, input: variantInput } });
+                } else {
+                    await createVariant({ variables: { input: { ...variantInput, productId: id } } });
+                }
+            }
+
             navigate('/products');
-        } catch (err) { console.error(err); }
+        } catch (err: any) {
+            const message =
+                err?.graphQLErrors?.[0]?.message ??
+                err?.networkError?.result?.errors?.[0]?.message ??
+                err?.message ??
+                'Failed to save product. Please try again.';
+            setSubmitError(message);
+        } finally {
+            setSaving(false);
+        }
     };
 
     if (productLoading) return (
-        <div className="p-8 space-y-4">
+        <div className="p-8 space-y-4 max-w-4xl">
             <Skeleton className="h-8 w-48" />
             <Skeleton className="h-64 w-full" />
             <Skeleton className="h-64 w-full" />
@@ -172,7 +216,15 @@ export const ProductEditPage = () => {
     );
 
     if (productError) return (
-        <div className="p-8 text-red-500">Failed to load product</div>
+        <div className="p-8">
+            <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3 max-w-lg">
+                <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
+                <div>
+                    <p className="text-sm font-medium text-red-700">Failed to load product</p>
+                    <p className="text-xs text-red-500 mt-0.5">{productError.message}</p>
+                </div>
+            </div>
+        </div>
     );
 
     return (
@@ -198,22 +250,19 @@ export const ProductEditPage = () => {
                     {/* Left — main content */}
                     <div className="col-span-2 space-y-6">
 
+                        {submitError && (
+                            <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+                                <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
+                                <p className="text-sm text-red-700">{submitError}</p>
+                            </div>
+                        )}
+
                         {/* Basic Info */}
                         <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
                             <h2 className="font-semibold text-gray-800">Basic Information</h2>
-                            <div className="grid grid-cols-2 gap-4">
-                                <div className="space-y-1.5">
-                                    <label className="text-sm font-medium text-gray-700">Name <span className="text-red-500">*</span></label>
-                                    <Input value={form.name} onChange={handleChange('name')} placeholder="Product name" required />
-                                </div>
-                                <div className="space-y-1.5">
-                                    <label className="text-sm font-medium text-gray-700">Slug <span className="text-red-500">*</span></label>
-                                    <Input value={form.slug} onChange={handleChange('slug')} placeholder="product-slug" required />
-                                </div>
-                            </div>
                             <div className="space-y-1.5">
-                                <label className="text-sm font-medium text-gray-700">Short Description</label>
-                                <Input value={form.shortDescription} onChange={handleChange('shortDescription')} placeholder="Brief one-line summary" />
+                                <label className="text-sm font-medium text-gray-700">Name <span className="text-red-500">*</span></label>
+                                <Input value={form.name} onChange={handleChange('name')} placeholder="Product name" required />
                             </div>
                             <div className="space-y-1.5">
                                 <label className="text-sm font-medium text-gray-700">Description</label>
@@ -230,77 +279,78 @@ export const ProductEditPage = () => {
                             <div className="flex items-center justify-between">
                                 <div>
                                     <h2 className="font-semibold text-gray-800">Variants</h2>
-                                    <p className="text-xs text-gray-500 mt-0.5">{variants.length} variant{variants.length !== 1 ? 's' : ''}</p>
+                                    <p className="text-xs text-gray-500 mt-0.5">
+                                        {validVariants.length}/{variants.length} variant{variants.length !== 1 ? 's' : ''} ready to save
+                                        {deletedVariantIds.length > 0 && (
+                                            <span className="text-red-400 ml-1">· {deletedVariantIds.length} will be deleted</span>
+                                        )}
+                                    </p>
                                 </div>
-                                <Button type="button" variant="outline" size="sm" onClick={() => setVariants(p => [...p, emptyVariant()])} className="gap-1.5">
+                                <Button type="button" variant="outline" size="sm"
+                                    onClick={() => setVariants(p => [...p, emptyVariant()])} className="gap-1.5">
                                     <Plus className="w-3.5 h-3.5" /> Add Variant
                                 </Button>
                             </div>
 
                             {variants.length === 0 && (
                                 <div className="text-center py-8 text-gray-400 border border-dashed border-gray-200 rounded-lg">
-                                    No variants yet. Add one above.
+                                    No variants. Add one above.
                                 </div>
                             )}
 
-                            {variants.map((variant, index) => (
-                                <div key={variant.id ?? index} className={`border rounded-lg p-4 space-y-3 ${variant.isNew ? 'border-indigo-200 bg-indigo-50/30' : 'border-gray-100 bg-gray-50/50'}`}>
-                                    <div className="flex items-center justify-between">
-                                        <div className="flex items-center gap-2">
-                                            <Badge variant="outline" className="text-xs bg-white">
-                                                {variant.isNew ? 'New' : `Variant ${index + 1}`}
-                                            </Badge>
-                                            {!variant.isActive && (
-                                                <Badge variant="outline" className="text-xs bg-gray-100 text-gray-500">Inactive</Badge>
-                                            )}
+                            {variants.map((variant, index) => {
+                                const ready = isVariantValid(variant);
+                                return (
+                                    <div key={variant.id ?? index}
+                                        className={`border rounded-lg p-4 space-y-3 ${
+                                            variant.isNew
+                                                ? 'border-indigo-200 bg-indigo-50/30'
+                                                : ready
+                                                    ? 'border-gray-100 bg-gray-50/50'
+                                                    : 'border-amber-200 bg-amber-50/30'
+                                        }`}>
+                                        <div className="flex items-center justify-between">
+                                            <div className="flex items-center gap-2">
+                                                <Badge variant="outline" className="text-xs bg-white">
+                                                    {variant.isNew ? 'New' : `Variant ${index + 1}`}
+                                                </Badge>
+                                                {!variant.isActive && (
+                                                    <Badge variant="outline" className="text-xs bg-gray-100 text-gray-500">Inactive</Badge>
+                                                )}
+                                                {!ready && (
+                                                    <span className="text-xs text-amber-600">SKU &amp; Name required</span>
+                                                )}
+                                            </div>
+                                            <button type="button" onClick={() => removeVariant(index)} className="text-red-400 hover:text-red-600">
+                                                <Trash2 className="w-4 h-4" />
+                                            </button>
                                         </div>
-                                        <button type="button" onClick={() => removeVariant(index)} className="text-red-400 hover:text-red-600">
-                                            <Trash2 className="w-4 h-4" />
-                                        </button>
+                                        <div className="grid grid-cols-3 gap-3">
+                                            <div className="space-y-1.5">
+                                                <label className="text-xs font-medium text-gray-600">SKU <span className="text-red-500">*</span></label>
+                                                <Input value={variant.sku} onChange={handleVariantChange(index, 'sku')} placeholder="SKU-001" className="bg-white" />
+                                            </div>
+                                            <div className="space-y-1.5">
+                                                <label className="text-xs font-medium text-gray-600">Variant Name <span className="text-red-500">*</span></label>
+                                                <Input value={variant.name} onChange={handleVariantChange(index, 'name')} placeholder="Default / XL / Red" className="bg-white" />
+                                            </div>
+                                            <div className="space-y-1.5">
+                                                <label className="text-xs font-medium text-gray-600">Price</label>
+                                                <Input type="number" value={variant.price} onChange={handleVariantChange(index, 'price')} placeholder="0.00" min="0" step="0.01" className="bg-white" />
+                                            </div>
+                                            <div className="space-y-1.5">
+                                                <label className="text-xs font-medium text-gray-600">Weight (grams)</label>
+                                                <Input type="number" value={variant.weightGrams} onChange={handleVariantChange(index, 'weightGrams')} placeholder="0" min="0" className="bg-white" />
+                                            </div>
+                                        </div>
+                                        <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+                                            <input type="checkbox" checked={variant.isActive} onChange={handleVariantChange(index, 'isActive')} className="rounded" />
+                                            Active
+                                        </label>
                                     </div>
-                                    <div className="grid grid-cols-3 gap-3">
-                                        <div className="space-y-1.5">
-                                            <label className="text-xs font-medium text-gray-600">SKU <span className="text-red-500">*</span></label>
-                                            <Input value={variant.sku} onChange={handleVariantChange(index, 'sku')} placeholder="SKU-001" className="bg-white" />
-                                        </div>
-                                        <div className="space-y-1.5">
-                                            <label className="text-xs font-medium text-gray-600">Variant Name <span className="text-red-500">*</span></label>
-                                            <Input value={variant.name} onChange={handleVariantChange(index, 'name')} placeholder="Default / XL / Red" className="bg-white" />
-                                        </div>
-                                        <div className="space-y-1.5">
-                                            <label className="text-xs font-medium text-gray-600">Options</label>
-                                            <Input value={variant.options} onChange={handleVariantChange(index, 'options')} placeholder='{"size":"XL"}' className="bg-white" />
-                                        </div>
-                                        <div className="space-y-1.5">
-                                            <label className="text-xs font-medium text-gray-600">Price <span className="text-red-500">*</span></label>
-                                            <Input type="number" value={variant.price} onChange={handleVariantChange(index, 'price')} placeholder="0.00" min="0" step="0.01" className="bg-white" />
-                                        </div>
-                                        <div className="space-y-1.5">
-                                            <label className="text-xs font-medium text-gray-600">Compare At Price</label>
-                                            <Input type="number" value={variant.compareAtPrice} onChange={handleVariantChange(index, 'compareAtPrice')} placeholder="0.00" min="0" step="0.01" className="bg-white" />
-                                        </div>
-                                        <div className="space-y-1.5">
-                                            <label className="text-xs font-medium text-gray-600">Cost Price</label>
-                                            <Input type="number" value={variant.costPrice} onChange={handleVariantChange(index, 'costPrice')} placeholder="0.00" min="0" step="0.01" className="bg-white" />
-                                        </div>
-                                        <div className="space-y-1.5">
-                                            <label className="text-xs font-medium text-gray-600">Weight (grams) <span className="text-red-500">*</span></label>
-                                            <Input type="number" value={variant.weightGrams} onChange={handleVariantChange(index, 'weightGrams')} placeholder="0" min="0" className="bg-white" />
-                                        </div>
-                                    </div>
-                                    <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
-                                        <input type="checkbox" checked={variant.isActive} onChange={handleVariantChange(index, 'isActive')} className="rounded" />
-                                        Active
-                                    </label>
-                                </div>
-                            ))}
+                                );
+                            })}
                         </div>
-
-                        {saveError && (
-                            <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-3">
-                                {saveError.message}
-                            </div>
-                        )}
                     </div>
 
                     {/* Right — meta */}
@@ -309,32 +359,17 @@ export const ProductEditPage = () => {
                             <h2 className="font-semibold text-gray-800">Product Details</h2>
                             <div className="space-y-1.5">
                                 <label className="text-sm font-medium text-gray-700">Category <span className="text-red-500">*</span></label>
-                                <select value={form.categoryId} onChange={handleChange('categoryId')} required
-                                    className="w-full rounded-md border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                                <select
+                                    value={form.categoryId}
+                                    onChange={handleChange('categoryId')}
+                                    required
+                                    className="w-full rounded-md border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                >
                                     <option value="">Select a category</option>
-                                    {categories.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                                    {categories.map((c: any) => (
+                                        <option key={c.id} value={c.id}>{c.name}</option>
+                                    ))}
                                 </select>
-                            </div>
-                            <div className="space-y-1.5">
-                                <label className="text-sm font-medium text-gray-700">Status</label>
-                                <select value={form.status} onChange={handleChange('status')}
-                                    className="w-full rounded-md border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                                    <option value="active">Active</option>
-                                    <option value="draft">Draft</option>
-                                    <option value="inactive">Inactive</option>
-                                </select>
-                            </div>
-                            <div className="space-y-1.5">
-                                <label className="text-sm font-medium text-gray-700">Brand</label>
-                                <Input value={form.brand} onChange={handleChange('brand')} placeholder="Brand name" />
-                            </div>
-                            <div className="space-y-1.5">
-                                <label className="text-sm font-medium text-gray-700">Tags</label>
-                                <Input value={form.tags} onChange={handleChange('tags')} placeholder="sale, new (comma separated)" />
-                            </div>
-                            <div className="space-y-1.5">
-                                <label className="text-sm font-medium text-gray-700">Attributes</label>
-                                <Input value={form.attributes} onChange={handleChange('attributes')} placeholder='{"color":"midnight"}' />
                             </div>
                         </div>
                     </div>
