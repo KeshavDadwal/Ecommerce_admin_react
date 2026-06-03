@@ -69,7 +69,9 @@ export const ProductCreatePage = () => {
   const categories =
     (categoriesData as any)?.categories?.edges?.map((e: any) => e.node) ?? [];
 
-  const [createProduct, { loading }] = useMutation(CREATE_PRODUCT);
+  const [createProduct, { loading }] = useMutation(CREATE_PRODUCT, {
+    refetchQueries: ["GetProducts"],
+  });
 
   const toSlug = (str: string) =>
     str

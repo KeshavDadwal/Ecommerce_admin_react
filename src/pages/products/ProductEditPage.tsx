@@ -139,10 +139,10 @@ export const ProductEditPage = () => {
   const categories =
     (categoriesData as any)?.categories?.edges?.map((e: any) => e.node) ?? [];
 
-  const [updateProduct] = useMutation(UPDATE_PRODUCT);
-  const [createVariant] = useMutation(CREATE_VARIANT);
-  const [updateVariant] = useMutation(UPDATE_VARIANT);
-  const [deleteVariant] = useMutation(DELETE_VARIANT);
+  const [updateProduct] = useMutation(UPDATE_PRODUCT, { refetchQueries: ["GetProducts", "GetProduct"] });
+  const [createVariant] = useMutation(CREATE_VARIANT, { refetchQueries: ["GetProducts", "GetProduct"] });
+  const [updateVariant] = useMutation(UPDATE_VARIANT, { refetchQueries: ["GetProducts", "GetProduct"] });
+  const [deleteVariant] = useMutation(DELETE_VARIANT, { refetchQueries: ["GetProducts", "GetProduct"] });
 
   useEffect(() => {
     const p = (productData as any)?.product;
