@@ -86,7 +86,7 @@ export const ProductsPage = () => {
 
     const goPrev = () => {
         const prev = [...cursors];
-        const startCursor = prev.pop();
+        prev.pop(); // Remove current page's startCursor
         setCursors(prev);
         // go back: use the previous startCursor as "after" offset
         // simplest: if stack empty go to first page

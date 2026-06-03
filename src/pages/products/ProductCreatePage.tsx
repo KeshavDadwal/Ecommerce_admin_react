@@ -172,6 +172,7 @@ export const ProductCreatePage = () => {
 
       console.log("📦 Creating product with variants:", productInput);
 
+      console.log("SENDING:", JSON.stringify(productInput, null, 2));
       await createProduct({ variables: { input: productInput } });
 
       console.log("✅ Product and variants created");
