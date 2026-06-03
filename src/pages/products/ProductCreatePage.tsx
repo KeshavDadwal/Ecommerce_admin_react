@@ -24,14 +24,7 @@ const CREATE_PRODUCT = gql`
   mutation CreateProduct($input: CreateProductInput!) {
     createProduct(input: $input) {
       id
-    }
-  }
-`;
-
-const CREATE_VARIANT = gql`
-  mutation CreateVariant($input: CreateVariantInput!) {
-    createVariant(input: $input) {
-      id
+      variants { id }
     }
   }
 `;
@@ -43,18 +36,16 @@ interface Variant {
   compareAtPrice: string;
   costPrice: string;
   weightGrams: string;
-  options: string;
   isActive: boolean;
 }
 
 const emptyVariant = (): Variant => ({
   sku: "",
   name: "",
-  price: "0", // ← was '' which caused variants to be filtered out silently
+  price: "0",
   compareAtPrice: "",
   costPrice: "",
   weightGrams: "0",
-  options: "",
   isActive: true,
 });
 
@@ -77,8 +68,8 @@ export const ProductCreatePage = () => {
   const { data: categoriesData } = useQuery(GET_CATEGORIES);
   const categories =
     (categoriesData as any)?.categories?.edges?.map((e: any) => e.node) ?? [];
+
   const [createProduct, { loading }] = useMutation(CREATE_PRODUCT);
-  const [createVariant] = useMutation(CREATE_VARIANT);
 
   const toSlug = (str: string) =>
     str
@@ -120,7 +111,6 @@ export const ProductCreatePage = () => {
       );
     };
 
-  // Validate a variant has the minimum required fields
   const isVariantValid = (v: Variant) =>
     v.sku.trim() !== "" && v.name.trim() !== "";
 
@@ -142,96 +132,47 @@ export const ProductCreatePage = () => {
       return;
     }
 
-    // Build payload — only send fields that the backend handles correctly.
-    // Extra fields (attributes, options, compareAtPrice, costPrice) were found to cause
-    // variants to be silently dropped. Add them back once the backend is fixed.
-    const mutationInput: Record<string, unknown> = {
-      name: form.name.trim(),
-      slug: form.slug.trim(),
-      description: form.description.trim() || " ",
-      categoryIds: form.categoryIds,
-    };
-
-    // Optional fields — add only if filled in, and only safe ones
-    if (form.shortDescription.trim())
-      mutationInput.shortDescription = form.shortDescription.trim();
-    if (form.status) mutationInput.status = form.status;
-    if (form.brand.trim()) mutationInput.brand = form.brand.trim();
-    if (form.tags.trim()) {
-      mutationInput.tags = form.tags
-        .split(",")
-        .map((t: string) => t.trim())
-        .filter(Boolean);
-    }
-    // attributes omitted for now — JSON string causes backend to silently drop variants
-    // if (form.attributes.trim()) mutationInput.attributes = form.attributes.trim();
-
-    console.log("📦 Sending payload:", JSON.stringify(mutationInput, null, 2));
-
     try {
-      // 1. Create product FIRST (without variants)
       const productInput: Record<string, unknown> = {
         name: form.name.trim(),
         slug: form.slug.trim(),
         description: form.description.trim() || " ",
         categoryIds: form.categoryIds,
+        variants: validVariants.map((v) => ({
+          sku: v.sku.trim(),
+          name: v.name.trim(),
+          price: parseFloat(v.price) || 0,
+          weightGrams: parseInt(v.weightGrams) || 0,
+          isActive: v.isActive,
+          ...(v.compareAtPrice
+            ? { compareAtPrice: parseFloat(v.compareAtPrice) }
+            : {}),
+          ...(v.costPrice
+            ? { costPrice: parseFloat(v.costPrice) }
+            : {}),
+        })),
       };
 
-      if (form.shortDescription.trim()) {
+      if (form.shortDescription.trim())
         productInput.shortDescription = form.shortDescription.trim();
-      }
-
-      if (form.status) {
+      if (form.status)
         productInput.status = form.status;
-      }
-
-      if (form.brand.trim()) {
+      if (form.brand.trim())
         productInput.brand = form.brand.trim();
-      }
-
       if (form.tags.trim()) {
         productInput.tags = form.tags
           .split(",")
           .map((t: string) => t.trim())
           .filter(Boolean);
       }
+      if (form.attributes.trim())
+        productInput.attributes = form.attributes.trim();
 
-      console.log("📦 Creating product:", productInput);
+      console.log("📦 Creating product with variants:", productInput);
 
-      const result = await createProduct({
-        variables: {
-          input: productInput,
-        },
-      });
+      await createProduct({ variables: { input: productInput } });
 
-      const productId = (result.data as any)?.createProduct?.id;
-
-      if (!productId) {
-        throw new Error("Product created but no product ID returned.");
-      }
-
-      console.log("✅ Product created:", productId);
-
-      // 2. Create variants separately
-      for (const variant of validVariants) {
-        const variantInput = {
-          productId,
-          sku: variant.sku.trim(),
-          name: variant.name.trim(),
-          price: parseFloat(variant.price) || 0,
-          weightGrams: parseInt(variant.weightGrams) || 0,
-          isActive: variant.isActive,
-        };
-
-        console.log("📦 Creating variant:", variantInput);
-
-        await createVariant({
-          variables: {
-            input: variantInput,
-          },
-        });
-      }
-
+      console.log("✅ Product and variants created");
       navigate("/products");
     } catch (err: any) {
       const message =
@@ -239,7 +180,7 @@ export const ProductCreatePage = () => {
         err?.networkError?.result?.errors?.[0]?.message ??
         err?.message ??
         "Failed to create product. Please try again.";
-
+      console.error("❌ Error:", err);
       setSubmitError(message);
     }
   };
@@ -258,6 +199,7 @@ export const ProductCreatePage = () => {
         </Button>
         <div className="h-4 w-px bg-gray-200" />
         <h1 className="text-lg font-semibold text-gray-900">Create Product</h1>
+
         <div className="ml-auto flex gap-3">
           <Button
             type="button"
@@ -279,9 +221,8 @@ export const ProductCreatePage = () => {
 
       <form id="product-form" onSubmit={handleSubmit}>
         <div className="px-8 py-6 grid grid-cols-3 gap-6">
-          {/* Left col — main info */}
+          {/* Left col */}
           <div className="col-span-2 space-y-6">
-            {/* Error banner */}
             {submitError && (
               <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
                 <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
@@ -423,7 +364,6 @@ export const ProductCreatePage = () => {
                           className="bg-white"
                         />
                       </div>
-                      {/* Options field hidden — backend bug causes silent variant drop when options is sent */}
                       <div className="space-y-1.5">
                         <label className="text-xs font-medium text-gray-600">
                           Price <span className="text-red-500">*</span>
@@ -445,10 +385,7 @@ export const ProductCreatePage = () => {
                         <Input
                           type="number"
                           value={variant.compareAtPrice}
-                          onChange={handleVariantChange(
-                            index,
-                            "compareAtPrice",
-                          )}
+                          onChange={handleVariantChange(index, "compareAtPrice")}
                           placeholder="0.00"
                           min="0"
                           step="0.01"
@@ -502,37 +439,47 @@ export const ProductCreatePage = () => {
           <div className="space-y-6">
             <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
               <h2 className="font-semibold text-gray-800">Product Details</h2>
+
+              {/* Category — checkboxes instead of multi-select */}
               <div className="space-y-1.5">
                 <label className="text-sm font-medium text-gray-700">
                   Category <span className="text-red-500">*</span>
                 </label>
-                <select
-                  multiple
-                  value={form.categoryIds}
-                  onChange={(e) => {
-                    const values = Array.from(
-                      e.target.selectedOptions,
-                      (option) => option.value,
-                    );
-
-                    setForm((prev) => ({
-                      ...prev,
-                      categoryIds: values,
-                    }));
-                  }}
-                  className="w-full rounded-md border border-gray-200 px-3 py-2 text-sm"
-                >
+                <div className="rounded-md border border-gray-200 px-3 py-2 space-y-1.5 max-h-40 overflow-y-auto">
                   {categories.map((c: any) => (
-                    <option key={c.id} value={c.id}>
+                    <label
+                      key={c.id}
+                      className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer hover:text-indigo-600"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={form.categoryIds.includes(c.id)}
+                        onChange={(e) => {
+                          setForm((prev) => ({
+                            ...prev,
+                            categoryIds: e.target.checked
+                              ? [...prev.categoryIds, c.id]
+                              : prev.categoryIds.filter((id) => id !== c.id),
+                          }));
+                        }}
+                        className="rounded text-indigo-600"
+                      />
                       {c.name}
-                    </option>
+                    </label>
                   ))}
-                </select>
+                  {categories.length === 0 && (
+                    <p className="text-xs text-gray-400">Loading categories…</p>
+                  )}
+                </div>
+                {form.categoryIds.length > 0 && (
+                  <p className="text-xs text-indigo-600">
+                    {form.categoryIds.length} selected
+                  </p>
+                )}
               </div>
+
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-gray-700">
-                  Status
-                </label>
+                <label className="text-sm font-medium text-gray-700">Status</label>
                 <select
                   value={form.status}
                   onChange={handleChange("status")}
@@ -544,9 +491,7 @@ export const ProductCreatePage = () => {
                 </select>
               </div>
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-gray-700">
-                  Brand
-                </label>
+                <label className="text-sm font-medium text-gray-700">Brand</label>
                 <Input
                   value={form.brand}
                   onChange={handleChange("brand")}
@@ -554,9 +499,7 @@ export const ProductCreatePage = () => {
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-gray-700">
-                  Tags
-                </label>
+                <label className="text-sm font-medium text-gray-700">Tags</label>
                 <Input
                   value={form.tags}
                   onChange={handleChange("tags")}
