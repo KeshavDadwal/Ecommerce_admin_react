@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useMutation, useQuery } from "@apollo/client/react";
 import { gql } from "@apollo/client";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Plus, Trash2, AlertCircle } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, AlertCircle, ImagePlus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -37,6 +37,7 @@ interface Variant {
   costPrice: string;
   weightGrams: string;
   isActive: boolean;
+  images: File[];
 }
 
 const emptyVariant = (): Variant => ({
@@ -47,8 +48,102 @@ const emptyVariant = (): Variant => ({
   costPrice: "",
   weightGrams: "0",
   isActive: true,
+  images: [],
 });
 
+// ── Variant Image Upload Strip ──────────────────────────────────────────────
+interface VariantImageUploadProps {
+  images: File[];
+  onChange: (images: File[]) => void;
+}
+
+const VariantImageUpload = ({ images, onChange }: VariantImageUploadProps) => {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [dragOver, setDragOver] = useState(false);
+
+  const addFiles = (files: FileList | null) => {
+    if (!files) return;
+    const accepted = Array.from(files).filter((f) =>
+      f.type.startsWith("image/")
+    );
+    onChange([...images, ...accepted]);
+  };
+
+  const removeImage = (index: number) => {
+    onChange(images.filter((_, i) => i !== index));
+  };
+
+  return (
+    <div className="space-y-2">
+      <label className="text-xs font-medium text-gray-600">Images</label>
+
+      <div className="flex flex-wrap gap-2 items-start">
+        {/* Thumbnails */}
+        {images.map((file, i) => {
+          const url = URL.createObjectURL(file);
+          return (
+            <div
+              key={i}
+              className="relative w-16 h-16 rounded-md overflow-hidden border border-gray-200 group flex-shrink-0"
+            >
+              <img
+                src={url}
+                alt={file.name}
+                className="w-full h-full object-cover"
+                onLoad={() => URL.revokeObjectURL(url)}
+              />
+              <button
+                type="button"
+                onClick={() => removeImage(i)}
+                className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          );
+        })}
+
+        {/* Drop / click zone */}
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragOver(false);
+            addFiles(e.dataTransfer.files);
+          }}
+          className={`w-16 h-16 flex-shrink-0 rounded-md border-2 border-dashed flex flex-col items-center justify-center gap-0.5 transition-colors ${
+            dragOver
+              ? "border-indigo-400 bg-indigo-50"
+              : "border-gray-300 bg-white hover:border-indigo-300 hover:bg-indigo-50/50"
+          }`}
+        >
+          <ImagePlus className="w-4 h-4 text-gray-400" />
+          <span className="text-[10px] text-gray-400 leading-none">Add</span>
+        </button>
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={(e) => addFiles(e.target.files)}
+        />
+      </div>
+
+      {images.length > 0 && (
+        <p className="text-[10px] text-gray-400">
+          {images.length} image{images.length !== 1 ? "s" : ""} selected
+        </p>
+      )}
+    </div>
+  );
+};
+
+// ── Main Page ────────────────────────────────────────────────────────────────
 export const ProductCreatePage = () => {
   const navigate = useNavigate();
   const [form, setForm] = useState({
@@ -113,6 +208,12 @@ export const ProductCreatePage = () => {
       );
     };
 
+  const handleVariantImages = (index: number, images: File[]) => {
+    setVariants((prev) =>
+      prev.map((v, i) => (i === index ? { ...v, images } : v))
+    );
+  };
+
   const isVariantValid = (v: Variant) =>
     v.sku.trim() !== "" && v.name.trim() !== "";
 
@@ -152,6 +253,7 @@ export const ProductCreatePage = () => {
           ...(v.costPrice
             ? { costPrice: parseFloat(v.costPrice) }
             : {}),
+          ...(v.images.length > 0 ? { images: v.images } : {}),
         })),
       };
 
@@ -171,8 +273,6 @@ export const ProductCreatePage = () => {
         productInput.attributes = form.attributes.trim();
 
       console.log("📦 Creating product with variants:", productInput);
-
-      console.log("SENDING:", JSON.stringify(productInput, null, 2));
       await createProduct({ variables: { input: productInput } });
 
       console.log("✅ Product and variants created");
@@ -344,6 +444,7 @@ export const ProductCreatePage = () => {
                         </button>
                       )}
                     </div>
+
                     <div className="grid grid-cols-3 gap-3">
                       <div className="space-y-1.5">
                         <label className="text-xs font-medium text-gray-600">
@@ -423,6 +524,13 @@ export const ProductCreatePage = () => {
                         />
                       </div>
                     </div>
+
+                    {/* Image Upload */}
+                    <VariantImageUpload
+                      images={variant.images}
+                      onChange={(imgs) => handleVariantImages(index, imgs)}
+                    />
+
                     <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
                       <input
                         type="checkbox"
@@ -443,7 +551,7 @@ export const ProductCreatePage = () => {
             <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
               <h2 className="font-semibold text-gray-800">Product Details</h2>
 
-              {/* Category — checkboxes instead of multi-select */}
+              {/* Category */}
               <div className="space-y-1.5">
                 <label className="text-sm font-medium text-gray-700">
                   Category <span className="text-red-500">*</span>
