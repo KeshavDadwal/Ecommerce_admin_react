@@ -28,6 +28,7 @@ const GET_PRODUCT = gql`
       id
       name
       description
+      brand
       categories {
         id
         name
@@ -37,6 +38,8 @@ const GET_PRODUCT = gql`
         sku
         name
         price
+        compareAtPrice
+        costPrice
         weightGrams
         isActive
         images {
@@ -57,15 +60,12 @@ const UPDATE_PRODUCT = gql`
   }
 `;
 
+// Variants must be handled separately — passing variants inline in updateProduct
+// replaces/wipes them. Use dedicated mutations per variant instead.
 const CREATE_VARIANT = gql`
   mutation CreateVariant($input: CreateVariantInput!) {
     createVariant(input: $input) {
-      id
-      sku
-      name
-      price
-      weightGrams
-      isActive
+      id sku name price weightGrams isActive
     }
   }
 `;
@@ -73,12 +73,7 @@ const CREATE_VARIANT = gql`
 const UPDATE_VARIANT = gql`
   mutation UpdateVariant($id: ID!, $input: UpdateVariantInput!) {
     updateVariant(id: $id, input: $input) {
-      id
-      sku
-      name
-      price
-      weightGrams
-      isActive
+      id sku name price weightGrams isActive
     }
   }
 `;
@@ -100,6 +95,8 @@ interface Variant {
   sku: string;
   name: string;
   price: string;
+  compareAtPrice: string;
+  costPrice: string;
   weightGrams: string;
   isActive: boolean;
   isNew?: boolean;
@@ -113,6 +110,8 @@ const emptyVariant = (): Variant => ({
   sku: "",
   name: "",
   price: "0",
+  compareAtPrice: "",
+  costPrice: "",
   weightGrams: "0",
   isActive: true,
   isNew: true,
@@ -270,8 +269,14 @@ export const ProductEditPage = () => {
 
   const [form, setForm] = useState({
     name: "",
+    slug: "",
     description: "",
+    shortDescription: "",
+    brand: "",
+    tags: "",
+    status: "active",
     categoryIds: [] as string[],
+    attributes: "",
   });
   const [variants, setVariants] = useState<Variant[]>([]);
   const [deletedVariantIds, setDeletedVariantIds] = useState<string[]>([]);
@@ -306,8 +311,14 @@ export const ProductEditPage = () => {
     if (!p) return;
     setForm({
       name: p.name ?? "",
+      slug: p.name ? p.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") : "",
       description: p.description ?? "",
+      shortDescription: "",
+      brand: p.brand ?? "",
+      tags: "",
+      status: "active",
       categoryIds: (p.categories ?? []).map((c: any) => c.id),
+      attributes: "",
     });
     setVariants(
       (p.variants ?? []).map((v: any) => ({
@@ -315,6 +326,8 @@ export const ProductEditPage = () => {
         sku: v.sku ?? "",
         name: v.name ?? "",
         price: String(v.price ?? "0"),
+        compareAtPrice: v.compareAtPrice ? String(v.compareAtPrice) : "",
+        costPrice: v.costPrice ? String(v.costPrice) : "",
         weightGrams: String(v.weightGrams ?? "0"),
         isActive: v.isActive ?? true,
         isNew: false,
@@ -334,7 +347,14 @@ export const ProductEditPage = () => {
         HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
       >,
     ) => {
-      setForm((prev) => ({ ...prev, [field]: e.target.value }));
+      const value = e.target.value;
+      setForm((prev) => ({
+        ...prev,
+        [field]: value,
+        ...(field === "name" && prev.slug === toSlug(prev.name)
+          ? { slug: toSlug(value) }
+          : {}),
+      }));
     };
 
   const handleVariantChange =
@@ -395,44 +415,77 @@ export const ProductEditPage = () => {
       return;
     }
 
-    try {
-      // 1. Delete removed variants first to avoid duplicate SKU conflicts
-      for (const vid of deletedVariantIds) {
-        await deleteVariant({ variables: { id: vid } });
+    if (form.attributes.trim()) {
+      try {
+        JSON.parse(form.attributes.trim());
+      } catch {
+        setSubmitError('Attributes must be valid JSON (e.g. {"color":"red"})');
+        setSaving(false);
+        return;
       }
+    }
 
-      // 2. Update product basic info
+    try {
+      // 1. Update product fields only — DO NOT pass variants here,
+      //    it wipes all existing variants (confirmed from API response)
       await updateProduct({
         variables: {
           id,
           input: {
             name: form.name.trim(),
-            slug: toSlug(form.name.trim()),
+            slug: form.slug.trim() || toSlug(form.name.trim()),
             description: form.description.trim() || " ",
+            ...(form.shortDescription.trim() ? { shortDescription: form.shortDescription.trim() } : {}),
+            ...(form.brand.trim() ? { brand: form.brand.trim() } : {}),
+            ...(form.tags.trim() ? { tags: form.tags.split(",").map((t) => t.trim()).filter(Boolean) } : {}),
+            ...(form.attributes.trim() ? { attributes: form.attributes.trim() } : {}),
+            status: form.status,
             categoryIds: form.categoryIds,
           },
         },
       });
 
-      // 3. Update existing / create new variants sequentially
-      for (const v of validVariants) {
-        const variantInput: Record<string, unknown> = {
-          productId: id,
-          sku: v.sku.trim(),
-          name: v.name.trim(),
-          price: parseFloat(v.price) || 0,
-          weightGrams: parseInt(v.weightGrams) || 0,
-          isActive: v.isActive,
-          ...(v.newImages.length > 0 ? { images: v.newImages } : {}),
-        };
+      // 2. Delete removed variants
+      for (const vid of deletedVariantIds) {
+        await deleteVariant({ variables: { id: vid } });
+      }
 
-        if (v.id) {
-          await updateVariant({ variables: { id: v.id, input: variantInput } });
-        } else {
-          await createVariant({
-            variables: { input: { ...variantInput, productId: id } },
-          });
-        }
+      // 3. Update existing variants (no images — UpdateVariantInput doesn't support it)
+      for (const v of validVariants.filter((v) => v.id && !v.isNew)) {
+        await updateVariant({
+          variables: {
+            id: v.id,
+            input: {
+              productId: id,
+              sku: v.sku.trim(),
+              name: v.name.trim(),
+              price: parseFloat(v.price) || 0,
+              ...(v.compareAtPrice !== "" ? { compareAtPrice: parseFloat(v.compareAtPrice) } : {}),
+              ...(v.costPrice !== "" ? { costPrice: parseFloat(v.costPrice) } : {}),
+              weightGrams: parseInt(v.weightGrams) || 0,
+              isActive: v.isActive,
+            },
+          },
+        });
+      }
+
+      // 4. Create new variants (image supported via CreateVariantInput)
+      for (const v of validVariants.filter((v) => v.isNew)) {
+        await createVariant({
+          variables: {
+            input: {
+              productId: id,
+              sku: v.sku.trim(),
+              name: v.name.trim(),
+              price: parseFloat(v.price) || 0,
+              ...(v.compareAtPrice !== "" ? { compareAtPrice: parseFloat(v.compareAtPrice) } : {}),
+              ...(v.costPrice !== "" ? { costPrice: parseFloat(v.costPrice) } : {}),
+              weightGrams: parseInt(v.weightGrams) || 0,
+              isActive: v.isActive,
+              ...(v.newImages.length > 0 ? { image: v.newImages[0] } : {}),
+            },
+          },
+        });
       }
 
       navigate("/products");
@@ -521,15 +574,38 @@ export const ProductEditPage = () => {
             {/* Basic Info */}
             <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
               <h2 className="font-semibold text-gray-800">Basic Information</h2>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-gray-700">
+                    Name <span className="text-red-500">*</span>
+                  </label>
+                  <Input
+                    value={form.name}
+                    onChange={handleChange("name")}
+                    placeholder="Product name"
+                    required
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-gray-700">
+                    Slug <span className="text-red-500">*</span>
+                  </label>
+                  <Input
+                    value={form.slug}
+                    onChange={handleChange("slug")}
+                    placeholder="product-slug"
+                    required
+                  />
+                </div>
+              </div>
               <div className="space-y-1.5">
                 <label className="text-sm font-medium text-gray-700">
-                  Name <span className="text-red-500">*</span>
+                  Short Description
                 </label>
                 <Input
-                  value={form.name}
-                  onChange={handleChange("name")}
-                  placeholder="Product name"
-                  required
+                  value={form.shortDescription}
+                  onChange={handleChange("shortDescription")}
+                  placeholder="Can't be pre-filled — enter to update"
                 />
               </div>
               <div className="space-y-1.5">
@@ -554,11 +630,6 @@ export const ProductEditPage = () => {
                   <p className="text-xs text-gray-500 mt-0.5">
                     {validVariants.length}/{variants.length} variant
                     {variants.length !== 1 ? "s" : ""} ready to save
-                    {deletedVariantIds.length > 0 && (
-                      <span className="text-red-400 ml-1">
-                        · {deletedVariantIds.length} will be deleted
-                      </span>
-                    )}
                   </p>
                 </div>
                 <Button
@@ -658,6 +729,34 @@ export const ProductEditPage = () => {
                       </div>
                       <div className="space-y-1.5">
                         <label className="text-xs font-medium text-gray-600">
+                          Compare At Price
+                        </label>
+                        <Input
+                          type="number"
+                          value={variant.compareAtPrice}
+                          onChange={handleVariantChange(index, "compareAtPrice")}
+                          placeholder="0.00"
+                          min="0"
+                          step="0.01"
+                          className="bg-white"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-medium text-gray-600">
+                          Cost Price
+                        </label>
+                        <Input
+                          type="number"
+                          value={variant.costPrice}
+                          onChange={handleVariantChange(index, "costPrice")}
+                          placeholder="0.00"
+                          min="0"
+                          step="0.01"
+                          className="bg-white"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-medium text-gray-600">
                           Weight (grams)
                         </label>
                         <Input
@@ -672,16 +771,49 @@ export const ProductEditPage = () => {
                     </div>
 
                     {/* Image Upload / Preview */}
-                    <VariantImageUpload
-                      existingImages={variant.existingImages}
-                      newImages={variant.newImages}
-                      onRemoveExisting={(imgId) =>
-                        handleRemoveExistingImage(index, imgId)
-                      }
-                      onNewImagesChange={(files) =>
-                        handleNewImagesChange(index, files)
-                      }
-                    />
+                    {variant.isNew ? (
+                      <VariantImageUpload
+                        existingImages={variant.existingImages}
+                        newImages={variant.newImages}
+                        onRemoveExisting={(imgId) =>
+                          handleRemoveExistingImage(index, imgId)
+                        }
+                        onNewImagesChange={(files) =>
+                          handleNewImagesChange(index, files)
+                        }
+                      />
+                    ) : (
+                      <div className="space-y-2">
+                        <label className="text-xs font-medium text-gray-600">
+                          Images
+                          {variant.existingImages.length > 0 && (
+                            <span className="ml-1.5 text-gray-400 font-normal">
+                              ({variant.existingImages.length})
+                            </span>
+                          )}
+                        </label>
+                        <div className="flex flex-wrap gap-2 items-center">
+                          {variant.existingImages.map((img) => (
+                            <div
+                              key={img.id}
+                              className="w-16 h-16 rounded-md overflow-hidden border border-gray-200 flex-shrink-0"
+                            >
+                              <img
+                                src={img.url}
+                                alt="variant"
+                                className="w-full h-full object-cover"
+                              />
+                            </div>
+                          ))}
+                          {variant.existingImages.length === 0 && (
+                            <span className="text-xs text-gray-400">No images</span>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-amber-600">
+                          Image editing for saved variants isn't supported by the API yet.
+                        </p>
+                      </div>
+                    )}
 
                     <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
                       <input
@@ -702,28 +834,103 @@ export const ProductEditPage = () => {
           <div className="space-y-6">
             <div className="bg-white rounded-xl border border-gray-200 p-6 space-y-4">
               <h2 className="font-semibold text-gray-800">Product Details</h2>
+
+              {/* API limitation notice */}
+              <div className="flex items-start gap-2 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5">
+                <AlertCircle className="w-3.5 h-3.5 text-amber-500 mt-0.5 flex-shrink-0" />
+                <p className="text-xs text-amber-700 leading-snug">
+                  Some fields can't be pre-filled — your API doesn't expose them on the Product type yet. Fill them in to update, or leave blank to keep existing values.
+                </p>
+              </div>
+
+              {/* Category — checkboxes matching Create page */}
               <div className="space-y-1.5">
                 <label className="text-sm font-medium text-gray-700">
                   Category <span className="text-red-500">*</span>
                 </label>
+                <div className="rounded-md border border-gray-200 px-3 py-2 space-y-1.5 max-h-40 overflow-y-auto">
+                  {categories.map((c: any) => (
+                    <label
+                      key={c.id}
+                      className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer hover:text-indigo-600"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={form.categoryIds.includes(c.id)}
+                        onChange={(e) => {
+                          setForm((prev) => ({
+                            ...prev,
+                            categoryIds: e.target.checked
+                              ? [...prev.categoryIds, c.id]
+                              : prev.categoryIds.filter((cid) => cid !== c.id),
+                          }));
+                        }}
+                        className="rounded text-indigo-600"
+                      />
+                      {c.name}
+                    </label>
+                  ))}
+                  {categories.length === 0 && (
+                    <p className="text-xs text-gray-400">Loading categories…</p>
+                  )}
+                </div>
+                {form.categoryIds.length > 0 && (
+                  <p className="text-xs text-indigo-600">
+                    {form.categoryIds.length} selected
+                  </p>
+                )}
+              </div>
+
+              {/* Status */}
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-gray-700">Status</label>
                 <select
-                  multiple
-                  value={form.categoryIds}
-                  onChange={(e) => {
-                    const values = Array.from(
-                      e.target.selectedOptions,
-                      (option) => option.value,
-                    );
-                    setForm((prev) => ({ ...prev, categoryIds: values }));
-                  }}
+                  value={form.status}
+                  onChange={handleChange("status")}
                   className="w-full rounded-md border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 >
-                  {categories.map((c: any) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
+                  <option value="active">Active</option>
+                  <option value="draft">Draft</option>
+                  <option value="inactive">Inactive</option>
                 </select>
+              </div>
+
+              {/* Brand */}
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-gray-700">Brand</label>
+                <Input
+                  value={form.brand}
+                  onChange={handleChange("brand")}
+                  placeholder="Can't be pre-filled — enter to update"
+                />
+              </div>
+
+              {/* Tags */}
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-gray-700">Tags</label>
+                <Input
+                  value={form.tags}
+                  onChange={handleChange("tags")}
+                  placeholder="Can't be pre-filled — enter to update"
+                />
+              </div>
+
+              {/* Attributes */}
+              <div className="space-y-1.5">
+                <label className="text-sm font-medium text-gray-700">
+                  Attributes
+                </label>
+                <Input
+                  value={form.attributes}
+                  onChange={handleChange("attributes")}
+                  placeholder='{"color":"midnight"}'
+                  aria-invalid={form.attributes.trim() !== "" && (() => { try { JSON.parse(form.attributes); return false; } catch { return true; } })()}
+                  className={form.attributes.trim() !== "" && (() => { try { JSON.parse(form.attributes); return false; } catch { return true; } })() ? "border-red-300 focus:ring-red-400" : ""}
+                />
+                {form.attributes.trim() !== "" && (() => { try { JSON.parse(form.attributes); return false; } catch { return true; } })() && (
+                  <p className="text-xs text-red-500">Must be valid JSON, e.g. {`{"color":"red"}`}</p>
+                )}
+                <p className="text-xs text-gray-400">Leave blank to keep existing value.</p>
               </div>
             </div>
           </div>
