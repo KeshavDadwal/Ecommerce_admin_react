@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
-import { useQuery, useLazyQuery } from '@apollo/client/react';
+import { useQuery, useLazyQuery, useMutation } from '@apollo/client/react';
 import { gql } from '@apollo/client';
-import { Search, Plus, Package, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, Plus, Package, ChevronLeft, ChevronRight, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -48,20 +48,44 @@ const SEARCH_PRODUCTS = gql`
     }
 `;
 
+const DELETE_PRODUCT = gql`
+    mutation DeleteProduct($id: ID!) {
+        deleteProduct(id: $id)
+    }
+`;
+
 export const ProductsPage = () => {
     const navigate = useNavigate();
     const [search, setSearch] = useState('');
-    const [cursors, setCursors] = useState<string[]>([]); // stack of startCursors for prev
+    const [cursors, setCursors] = useState<string[]>([]);
     const [afterCursor, setAfterCursor] = useState<string | null>(null);
+    const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+    const [confirmDeleteName, setConfirmDeleteName] = useState<string>('');
+    const [deleteError, setDeleteError] = useState<string | null>(null);
 
-    // Main paginated query
     const { data, loading, error } = useQuery(GET_PRODUCTS, {
         variables: { first: PAGE_SIZE, after: afterCursor },
         skip: search.trim().length > 0,
     });
 
-    // Search query
     const [runSearch, { data: searchData, loading: searchLoading }] = useLazyQuery(SEARCH_PRODUCTS);
+
+    const [deleteProduct, { loading: deleteLoading }] = useMutation(DELETE_PRODUCT, {
+        // Evict the deleted product from Apollo's cache immediately so the
+        // list updates without needing a manual refetch or stale-closure issues.
+        update(cache, _, { variables }) {
+            cache.evict({ id: `Product:${variables?.id}` });
+            cache.gc();
+        },
+        onCompleted: () => {
+            setConfirmDeleteId(null);
+            setConfirmDeleteName('');
+            setDeleteError(null);
+        },
+        onError: (err) => {
+            setDeleteError(err.message ?? 'Failed to delete product.');
+        },
+    });
 
     const handleSearchChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
         const val = e.target.value;
@@ -70,6 +94,17 @@ export const ProductsPage = () => {
             runSearch({ variables: { query: val.trim(), first: 50 } });
         }
     }, [runSearch]);
+
+    const handleDeleteClick = (id: string, name: string) => {
+        setDeleteError(null);
+        setConfirmDeleteId(id);
+        setConfirmDeleteName(name);
+    };
+
+    const handleDeleteConfirm = () => {
+        if (!confirmDeleteId) return;
+        deleteProduct({ variables: { id: confirmDeleteId } });
+    };
 
     const isSearching = search.trim().length > 1;
     const products = isSearching
@@ -86,11 +121,9 @@ export const ProductsPage = () => {
 
     const goPrev = () => {
         const prev = [...cursors];
-        prev.pop(); // Remove current page's startCursor
+        prev.pop();
         setCursors(prev);
-        // go back: use the previous startCursor as "after" offset
-        // simplest: if stack empty go to first page
-        setAfterCursor(prev.length > 0 ? cursors[cursors.length - 1] : null);
+        setAfterCursor(prev.length > 0 ? prev[prev.length - 1] : null);
     };
 
     const currentPage = cursors.length + 1;
@@ -175,6 +208,7 @@ export const ProductsPage = () => {
 
                         {products.map((product: any) => {
                             const variantCount = product.variants?.length ?? 0;
+                            const isDeleting = deleteLoading && confirmDeleteId === product.id;
                             return (
                                 <tr key={product.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
                                     <td className="px-6 py-4 font-medium text-gray-900">{product.name}</td>
@@ -196,14 +230,25 @@ export const ProductsPage = () => {
                                         {product.createdAt ? new Date(product.createdAt).toLocaleDateString() : '—'}
                                     </td>
                                     <td className="px-6 py-4">
-                                        <Button
-                                            size="sm"
-                                            variant="outline"
-                                            onClick={() => navigate(`/products/${product.id}/edit`)}
-                                            className="text-gray-600 hover:text-indigo-600 hover:border-indigo-300"
-                                        >
-                                            Edit
-                                        </Button>
+                                        <div className="flex items-center gap-2">
+                                            <Button
+                                                size="sm"
+                                                variant="outline"
+                                                onClick={() => navigate(`/products/${product.id}/edit`)}
+                                                className="text-gray-600 hover:text-indigo-600 hover:border-indigo-300"
+                                            >
+                                                Edit
+                                            </Button>
+                                            <Button
+                                                size="sm"
+                                                variant="outline"
+                                                onClick={() => handleDeleteClick(product.id, product.name)}
+                                                disabled={isDeleting}
+                                                className="text-red-400 hover:text-red-600 hover:border-red-300"
+                                            >
+                                                <Trash2 className="w-3.5 h-3.5" />
+                                            </Button>
+                                        </div>
                                     </td>
                                 </tr>
                             );
@@ -211,7 +256,7 @@ export const ProductsPage = () => {
                     </tbody>
                 </table>
 
-                {/* Pagination — only shown when not searching */}
+                {/* Pagination */}
                 {!isSearching && (pageInfo?.hasNextPage || pageInfo?.hasPreviousPage || currentPage > 1) && (
                     <div className="px-6 py-4 border-t border-gray-100 flex items-center justify-between">
                         <p className="text-xs text-gray-500">Page {currentPage}</p>
@@ -240,6 +285,57 @@ export const ProductsPage = () => {
                     </div>
                 )}
             </div>
+
+            {/* Delete Confirm Modal */}
+            {confirmDeleteId && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center">
+                    <div
+                        className="absolute inset-0 bg-black/40"
+                        onClick={() => { setConfirmDeleteId(null); setDeleteError(null); }}
+                    />
+                    <div className="relative bg-white rounded-xl shadow-xl p-6 w-full max-w-sm mx-4">
+                        <div className="flex items-center gap-3 mb-3">
+                            <div className="w-10 h-10 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0">
+                                <Trash2 className="w-5 h-5 text-red-600" />
+                            </div>
+                            <div>
+                                <h3 className="font-semibold text-gray-900">Delete Product</h3>
+                                <p className="text-sm text-gray-500">This action cannot be undone.</p>
+                            </div>
+                        </div>
+
+                        <p className="text-sm text-gray-700 mb-4">
+                            Are you sure you want to delete{' '}
+                            <span className="font-semibold">"{confirmDeleteName}"</span>?
+                        </p>
+
+                        {deleteError && (
+                            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-4">
+                                {deleteError}
+                            </p>
+                        )}
+
+                        <div className="flex gap-3 justify-end">
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => { setConfirmDeleteId(null); setDeleteError(null); }}
+                                disabled={deleteLoading}
+                            >
+                                Cancel
+                            </Button>
+                            <Button
+                                size="sm"
+                                onClick={handleDeleteConfirm}
+                                disabled={deleteLoading}
+                                className="bg-red-600 hover:bg-red-700 text-white"
+                            >
+                                {deleteLoading ? 'Deleting…' : 'Delete'}
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

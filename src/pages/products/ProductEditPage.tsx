@@ -1,8 +1,8 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useMutation, useQuery } from "@apollo/client/react";
 import { gql } from "@apollo/client";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Plus, Trash2, AlertCircle } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, AlertCircle, ImagePlus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +21,7 @@ const GET_CATEGORIES = gql`
   }
 `;
 
+// ── images added to the variant fragment ────────────────────────────────────
 const GET_PRODUCT = gql`
   query GetProduct($id: ID!) {
     product(id: $id) {
@@ -38,6 +39,10 @@ const GET_PRODUCT = gql`
         price
         weightGrams
         isActive
+        images {
+          id
+          url
+        }
       }
     }
   }
@@ -84,6 +89,12 @@ const DELETE_VARIANT = gql`
   }
 `;
 
+// ── Types ────────────────────────────────────────────────────────────────────
+interface ExistingImage {
+  id: string;
+  url: string;
+}
+
 interface Variant {
   id?: string;
   sku: string;
@@ -92,6 +103,10 @@ interface Variant {
   weightGrams: string;
   isActive: boolean;
   isNew?: boolean;
+  /** Images already saved on the server */
+  existingImages: ExistingImage[];
+  /** New images selected by the user (not yet uploaded) */
+  newImages: File[];
 }
 
 const emptyVariant = (): Variant => ({
@@ -101,6 +116,8 @@ const emptyVariant = (): Variant => ({
   weightGrams: "0",
   isActive: true,
   isNew: true,
+  existingImages: [],
+  newImages: [],
 });
 
 const isVariantValid = (v: Variant) =>
@@ -113,6 +130,138 @@ const toSlug = (str: string) =>
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-|-$/g, "");
 
+// ── Variant Image Upload Strip ───────────────────────────────────────────────
+interface VariantImageUploadProps {
+  existingImages: ExistingImage[];
+  newImages: File[];
+  onRemoveExisting: (id: string) => void;
+  onNewImagesChange: (files: File[]) => void;
+}
+
+const VariantImageUpload = ({
+  existingImages,
+  newImages,
+  onRemoveExisting,
+  onNewImagesChange,
+}: VariantImageUploadProps) => {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [dragOver, setDragOver] = useState(false);
+
+  const addFiles = (files: FileList | null) => {
+    if (!files) return;
+    const accepted = Array.from(files).filter((f) =>
+      f.type.startsWith("image/")
+    );
+    onNewImagesChange([...newImages, ...accepted]);
+  };
+
+  const removeNewImage = (index: number) => {
+    onNewImagesChange(newImages.filter((_, i) => i !== index));
+  };
+
+  const totalCount = existingImages.length + newImages.length;
+
+  return (
+    <div className="space-y-2">
+      <label className="text-xs font-medium text-gray-600">
+        Images
+        {totalCount > 0 && (
+          <span className="ml-1.5 text-gray-400 font-normal">
+            ({totalCount})
+          </span>
+        )}
+      </label>
+
+      <div className="flex flex-wrap gap-2 items-start">
+        {/* Existing server images */}
+        {existingImages.map((img) => (
+          <div
+            key={img.id}
+            className="relative w-16 h-16 rounded-md overflow-hidden border border-gray-200 group flex-shrink-0"
+          >
+            <img
+              src={img.url}
+              alt="variant"
+              className="w-full h-full object-cover"
+            />
+            {/* Subtle "saved" indicator */}
+            <div className="absolute bottom-0 left-0 right-0 bg-black/30 text-white text-[8px] text-center leading-tight py-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+              saved
+            </div>
+            <button
+              type="button"
+              onClick={() => onRemoveExisting(img.id)}
+              className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        ))}
+
+        {/* Newly selected (not yet saved) images */}
+        {newImages.map((file, i) => {
+          const url = URL.createObjectURL(file);
+          return (
+            <div
+              key={`new-${i}`}
+              className="relative w-16 h-16 rounded-md overflow-hidden border border-indigo-300 group flex-shrink-0"
+            >
+              <img
+                src={url}
+                alt={file.name}
+                className="w-full h-full object-cover"
+                onLoad={() => URL.revokeObjectURL(url)}
+              />
+              {/* "new" badge */}
+              <div className="absolute bottom-0 left-0 right-0 bg-indigo-500/70 text-white text-[8px] text-center leading-tight py-0.5">
+                new
+              </div>
+              <button
+                type="button"
+                onClick={() => removeNewImage(i)}
+                className="absolute top-0.5 right-0.5 bg-black/60 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+              >
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          );
+        })}
+
+        {/* Drop / click zone */}
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setDragOver(false);
+            addFiles(e.dataTransfer.files);
+          }}
+          className={`w-16 h-16 flex-shrink-0 rounded-md border-2 border-dashed flex flex-col items-center justify-center gap-0.5 transition-colors ${
+            dragOver
+              ? "border-indigo-400 bg-indigo-50"
+              : "border-gray-300 bg-white hover:border-indigo-300 hover:bg-indigo-50/50"
+          }`}
+        >
+          <ImagePlus className="w-4 h-4 text-gray-400" />
+          <span className="text-[10px] text-gray-400 leading-none">Add</span>
+        </button>
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={(e) => addFiles(e.target.files)}
+        />
+      </div>
+    </div>
+  );
+};
+
+// ── Main Page ────────────────────────────────────────────────────────────────
 export const ProductEditPage = () => {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -139,10 +288,18 @@ export const ProductEditPage = () => {
   const categories =
     (categoriesData as any)?.categories?.edges?.map((e: any) => e.node) ?? [];
 
-  const [updateProduct] = useMutation(UPDATE_PRODUCT, { refetchQueries: ["GetProducts", "GetProduct"] });
-  const [createVariant] = useMutation(CREATE_VARIANT, { refetchQueries: ["GetProducts", "GetProduct"] });
-  const [updateVariant] = useMutation(UPDATE_VARIANT, { refetchQueries: ["GetProducts", "GetProduct"] });
-  const [deleteVariant] = useMutation(DELETE_VARIANT, { refetchQueries: ["GetProducts", "GetProduct"] });
+  const [updateProduct] = useMutation(UPDATE_PRODUCT, {
+    refetchQueries: ["GetProducts", "GetProduct"],
+  });
+  const [createVariant] = useMutation(CREATE_VARIANT, {
+    refetchQueries: ["GetProducts", "GetProduct"],
+  });
+  const [updateVariant] = useMutation(UPDATE_VARIANT, {
+    refetchQueries: ["GetProducts", "GetProduct"],
+  });
+  const [deleteVariant] = useMutation(DELETE_VARIANT, {
+    refetchQueries: ["GetProducts", "GetProduct"],
+  });
 
   useEffect(() => {
     const p = (productData as any)?.product;
@@ -161,6 +318,11 @@ export const ProductEditPage = () => {
         weightGrams: String(v.weightGrams ?? "0"),
         isActive: v.isActive ?? true,
         isNew: false,
+        existingImages: (v.images ?? []).map((img: any) => ({
+          id: img.id,
+          url: img.url,
+        })),
+        newImages: [],
       })),
     );
   }, [productData]);
@@ -193,6 +355,27 @@ export const ProductEditPage = () => {
       );
     };
 
+  const handleRemoveExistingImage = (variantIndex: number, imageId: string) => {
+    setVariants((prev) =>
+      prev.map((v, i) =>
+        i === variantIndex
+          ? {
+              ...v,
+              existingImages: v.existingImages.filter((img) => img.id !== imageId),
+            }
+          : v,
+      ),
+    );
+  };
+
+  const handleNewImagesChange = (variantIndex: number, files: File[]) => {
+    setVariants((prev) =>
+      prev.map((v, i) =>
+        i === variantIndex ? { ...v, newImages: files } : v,
+      ),
+    );
+  };
+
   const removeVariant = (index: number) => {
     const v = variants[index];
     if (v.id) setDeletedVariantIds((prev) => [...prev, v.id!]);
@@ -213,12 +396,12 @@ export const ProductEditPage = () => {
     }
 
     try {
-      // 1. Delete removed variants FIRST to avoid duplicate SKU conflicts
+      // 1. Delete removed variants first to avoid duplicate SKU conflicts
       for (const vid of deletedVariantIds) {
         await deleteVariant({ variables: { id: vid } });
       }
 
-      // 2. Update product basic info only (no variants field)
+      // 2. Update product basic info
       await updateProduct({
         variables: {
           id,
@@ -233,13 +416,14 @@ export const ProductEditPage = () => {
 
       // 3. Update existing / create new variants sequentially
       for (const v of validVariants) {
-        const variantInput = {
+        const variantInput: Record<string, unknown> = {
           productId: id,
           sku: v.sku.trim(),
           name: v.name.trim(),
           price: parseFloat(v.price) || 0,
           weightGrams: parseInt(v.weightGrams) || 0,
           isActive: v.isActive,
+          ...(v.newImages.length > 0 ? { images: v.newImages } : {}),
         };
 
         if (v.id) {
@@ -434,6 +618,7 @@ export const ProductEditPage = () => {
                         <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
+
                     <div className="grid grid-cols-3 gap-3">
                       <div className="space-y-1.5">
                         <label className="text-xs font-medium text-gray-600">
@@ -485,6 +670,19 @@ export const ProductEditPage = () => {
                         />
                       </div>
                     </div>
+
+                    {/* Image Upload / Preview */}
+                    <VariantImageUpload
+                      existingImages={variant.existingImages}
+                      newImages={variant.newImages}
+                      onRemoveExisting={(imgId) =>
+                        handleRemoveExistingImage(index, imgId)
+                      }
+                      onNewImagesChange={(files) =>
+                        handleNewImagesChange(index, files)
+                      }
+                    />
+
                     <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
                       <input
                         type="checkbox"
@@ -516,11 +714,7 @@ export const ProductEditPage = () => {
                       e.target.selectedOptions,
                       (option) => option.value,
                     );
-
-                    setForm((prev) => ({
-                      ...prev,
-                      categoryIds: values,
-                    }));
+                    setForm((prev) => ({ ...prev, categoryIds: values }));
                   }}
                   className="w-full rounded-md border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 >
