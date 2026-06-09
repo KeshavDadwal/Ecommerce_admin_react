@@ -13,6 +13,7 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Separator } from '@/components/ui/separator';
+import { Bookmark } from 'lucide-react';
 
 const navItems = [
     { label: 'Dashboard', icon: LayoutDashboard, path: '/' },
@@ -20,6 +21,7 @@ const navItems = [
     { label: 'Products', icon: Package, path: '/products' },
     { label: 'Categories', icon: Tag, path: '/categories' },
     { label: 'Inventory', icon: Boxes, path: '/inventory' },
+    { label: 'Brands', icon: Bookmark, path: '/brands' },
 ];
 
 export const Sidebar = () => {
