@@ -2,70 +2,62 @@ import { useState } from 'react';
 import { useQuery, useMutation } from '@apollo/client/react';
 import { gql } from '@apollo/client';
 import { useNavigate } from 'react-router-dom';
-import { Search, Plus, Trash2, FolderTree } from 'lucide-react';
+import { Search, Plus, Trash2, Tag } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 
-const GET_CATEGORIES = gql`
-    query GetCategories {
-        categories(pagination: { first: 200 }) {
+const GET_BRANDS = gql`
+    query GetBrands {
+        brands(pagination: { first: 200 }) {
             edges {
                 node {
                     id
                     name
-                    slug
                     description
-                    parentId
                     imageUrl
+                    isActive
                 }
             }
         }
     }
 `;
 
-const DELETE_CATEGORY = gql`
-    mutation DeleteCategory($id: ID!) {
-        deleteCategory(id: $id)
+const DELETE_BRAND = gql`
+    mutation DeleteBrand($id: ID!) {
+        deleteBrand(id: $id)
     }
 `;
 
-export const CategoriesPage = () => {
+export const BrandsPage = () => {
     const navigate = useNavigate();
     const [search, setSearch] = useState('');
     const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
     const [deleting, setDeleting] = useState(false);
 
-    const { data, loading, error, refetch } = useQuery(GET_CATEGORIES);
-    const [deleteCategory] = useMutation(DELETE_CATEGORY);
+    const { data, loading, error, refetch } = useQuery(GET_BRANDS);
+    const [deleteBrand] = useMutation(DELETE_BRAND);
 
-    const categories = (data as any)?.categories?.edges?.map((e: any) => e.node) ?? [];
+    const brands = (data as any)?.brands?.edges?.map((e: any) => e.node) ?? [];
 
-    const filtered = categories.filter((c: any) =>
-        search === '' ||
-        c.name?.toLowerCase().includes(search.toLowerCase()) ||
-        c.slug?.toLowerCase().includes(search.toLowerCase())
+    const filtered = brands.filter((b: any) =>
+        search === '' || b.name?.toLowerCase().includes(search.toLowerCase())
     );
 
     const handleDeleteConfirm = async () => {
         if (!deleteTarget) return;
         setDeleting(true);
         try {
-            await deleteCategory({ variables: { id: deleteTarget.id } });
+            await deleteBrand({ variables: { id: deleteTarget.id } });
             refetch();
             setDeleteTarget(null);
         } catch (err: any) {
-            // error handling can be added if needed
+            // keep dialog open and show nothing — error can be added if needed
         } finally {
             setDeleting(false);
         }
-    };
-
-    const getParentName = (parentId: string | null) => {
-        if (!parentId) return null;
-        return categories.find((c: any) => c.id === parentId)?.name ?? null;
     };
 
     return (
@@ -73,7 +65,7 @@ export const CategoriesPage = () => {
             <ConfirmDialog
                 open={!!deleteTarget}
                 title={`Delete "${deleteTarget?.name}"?`}
-                description="This will permanently delete this category. This action cannot be undone."
+                description="This will permanently delete this brand. This action cannot be undone."
                 confirmLabel="Delete"
                 loading={deleting}
                 onConfirm={handleDeleteConfirm}
@@ -83,15 +75,15 @@ export const CategoriesPage = () => {
             {/* Header */}
             <div className="flex items-center justify-between mb-6">
                 <div>
-                    <h1 className="text-2xl font-bold text-gray-900">Categories</h1>
-                    <p className="text-sm text-gray-500 mt-0.5">Manage your product categories</p>
+                    <h1 className="text-2xl font-bold text-gray-900">Brands</h1>
+                    <p className="text-sm text-gray-500 mt-0.5">Manage your product brands</p>
                 </div>
                 <Button
-                    onClick={() => navigate('/categories/create')}
+                    onClick={() => navigate('/brands/create')}
                     className="bg-indigo-600 hover:bg-indigo-700 text-white gap-2"
                 >
                     <Plus className="w-4 h-4" />
-                    Create Category
+                    Create Brand
                 </Button>
             </div>
 
@@ -99,7 +91,7 @@ export const CategoriesPage = () => {
             <div className="relative mb-6 max-w-sm">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                 <Input
-                    placeholder="Search categories..."
+                    placeholder="Search brands..."
                     value={search}
                     onChange={e => setSearch(e.target.value)}
                     className="pl-9"
@@ -112,16 +104,15 @@ export const CategoriesPage = () => {
                     <thead>
                         <tr className="border-b border-gray-100 bg-gray-50">
                             <th className="text-left px-6 py-3 font-semibold text-gray-600">Name</th>
-                            <th className="text-left px-6 py-3 font-semibold text-gray-600">Slug</th>
-                            <th className="text-left px-6 py-3 font-semibold text-gray-600">Parent</th>
                             <th className="text-left px-6 py-3 font-semibold text-gray-600">Description</th>
+                            <th className="text-left px-6 py-3 font-semibold text-gray-600">Status</th>
                             <th className="text-left px-6 py-3 font-semibold text-gray-600">Actions</th>
                         </tr>
                     </thead>
                     <tbody>
                         {loading && Array.from({ length: 5 }).map((_, i) => (
                             <tr key={i} className="border-b border-gray-50">
-                                {Array.from({ length: 5 }).map((_, j) => (
+                                {Array.from({ length: 4 }).map((_, j) => (
                                     <td key={j} className="px-6 py-4">
                                         <Skeleton className="h-4 w-24" />
                                     </td>
@@ -131,60 +122,60 @@ export const CategoriesPage = () => {
 
                         {error && (
                             <tr>
-                                <td colSpan={5} className="px-6 py-12 text-center text-red-500">
-                                    Failed to load categories
+                                <td colSpan={4} className="px-6 py-12 text-center text-red-500">
+                                    Failed to load brands
                                 </td>
                             </tr>
                         )}
 
                         {!loading && filtered.length === 0 && !error && (
                             <tr>
-                                <td colSpan={5} className="px-6 py-12 text-center">
+                                <td colSpan={4} className="px-6 py-12 text-center">
                                     <div className="flex flex-col items-center gap-2 text-gray-400">
-                                        <FolderTree className="w-8 h-8" />
-                                        <p>No categories found</p>
+                                        <Tag className="w-8 h-8" />
+                                        <p>No brands found</p>
                                     </div>
                                 </td>
                             </tr>
                         )}
 
-                        {filtered.map((cat: any) => (
-                            <tr key={cat.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
+                        {filtered.map((brand: any) => (
+                            <tr key={brand.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
                                 <td className="px-6 py-4 font-medium text-gray-900">
-                                    <div className="flex items-center gap-2">
-                                        {cat.imageUrl ? (
+                                    <div className="flex items-center gap-3">
+                                        {brand.imageUrl ? (
                                             <img
-                                                src={cat.imageUrl}
-                                                alt={cat.name}
+                                                src={brand.imageUrl}
+                                                alt={brand.name}
                                                 className="w-8 h-8 rounded-lg object-cover border border-gray-100 flex-shrink-0"
                                             />
                                         ) : (
                                             <div className="w-8 h-8 rounded-lg bg-gray-100 flex items-center justify-center flex-shrink-0">
-                                                <FolderTree className="w-4 h-4 text-gray-400" />
+                                                <Tag className="w-4 h-4 text-gray-400" />
                                             </div>
                                         )}
-                                        {cat.name}
+                                        {brand.name}
                                     </div>
                                 </td>
-                                <td className="px-6 py-4 text-gray-500 font-mono text-xs">{cat.slug}</td>
-                                <td className="px-6 py-4">
-                                    {getParentName(cat.parentId) ? (
-                                        <Badge variant="outline" className="text-xs">
-                                            {getParentName(cat.parentId)}
-                                        </Badge>
-                                    ) : (
-                                        <span className="text-gray-400 text-xs">Root</span>
-                                    )}
-                                </td>
                                 <td className="px-6 py-4 text-gray-500 max-w-xs truncate">
-                                    {cat.description || '—'}
+                                    {brand.description || '—'}
+                                </td>
+                                <td className="px-6 py-4">
+                                    <Badge
+                                        variant="outline"
+                                        className={brand.isActive
+                                            ? 'bg-green-50 text-green-700 border-green-200'
+                                            : 'bg-gray-100 text-gray-500 border-gray-200'}
+                                    >
+                                        {brand.isActive ? 'Active' : 'Inactive'}
+                                    </Badge>
                                 </td>
                                 <td className="px-6 py-4">
                                     <div className="flex items-center gap-2">
                                         <Button
                                             size="sm"
                                             variant="outline"
-                                            onClick={() => navigate(`/categories/${cat.id}/edit`)}
+                                            onClick={() => navigate(`/brands/${brand.id}/edit`)}
                                             className="text-gray-600 hover:text-indigo-600 hover:border-indigo-300"
                                         >
                                             Edit
@@ -192,7 +183,7 @@ export const CategoriesPage = () => {
                                         <Button
                                             size="sm"
                                             variant="ghost"
-                                            onClick={() => setDeleteTarget({ id: cat.id, name: cat.name })}
+                                            onClick={() => setDeleteTarget({ id: brand.id, name: brand.name })}
                                             className="text-red-400 hover:text-red-600 hover:bg-red-50"
                                         >
                                             <Trash2 className="w-4 h-4" />
