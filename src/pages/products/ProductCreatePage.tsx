@@ -20,6 +20,19 @@ const GET_CATEGORIES = gql`
   }
 `;
 
+const GET_BRANDS = gql`
+  query GetBrands {
+    brands(pagination: { first: 200 }) {
+      edges {
+        node {
+          id
+          name
+        }
+      }
+    }
+  }
+`;
+
 const CREATE_PRODUCT = gql`
   mutation CreateProduct($input: CreateProductInput!) {
     createProduct(input: $input) {
@@ -151,7 +164,7 @@ export const ProductCreatePage = () => {
     slug: "",
     description: "",
     shortDescription: "",
-    brand: "",
+    brandId: "",
     tags: "",
     status: "active",
     categoryIds: [] as string[],
@@ -163,6 +176,10 @@ export const ProductCreatePage = () => {
   const { data: categoriesData } = useQuery(GET_CATEGORIES);
   const categories =
     (categoriesData as any)?.categories?.edges?.map((e: any) => e.node) ?? [];
+
+  const { data: brandsData } = useQuery(GET_BRANDS);
+  const brands =
+    (brandsData as any)?.brands?.edges?.map((e: any) => e.node) ?? [];
 
   const [createProduct, { loading }] = useMutation(CREATE_PRODUCT, {
     refetchQueries: ["GetProducts"],
@@ -261,8 +278,8 @@ export const ProductCreatePage = () => {
         productInput.shortDescription = form.shortDescription.trim();
       if (form.status)
         productInput.status = form.status;
-      if (form.brand.trim())
-        productInput.brand = form.brand.trim();
+      if (form.brandId)
+        productInput.brandId = form.brandId;
       if (form.tags.trim()) {
         productInput.tags = form.tags
           .split(",")
@@ -603,11 +620,16 @@ export const ProductCreatePage = () => {
               </div>
               <div className="space-y-1.5">
                 <label className="text-sm font-medium text-gray-700">Brand</label>
-                <Input
-                  value={form.brand}
-                  onChange={handleChange("brand")}
-                  placeholder="Brand name"
-                />
+                <select
+                  value={form.brandId}
+                  onChange={handleChange("brandId")}
+                  className="w-full rounded-md border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="">None</option>
+                  {brands.map((b: any) => (
+                    <option key={b.id} value={b.id}>{b.name}</option>
+                  ))}
+                </select>
               </div>
               <div className="space-y-1.5">
                 <label className="text-sm font-medium text-gray-700">Tags</label>

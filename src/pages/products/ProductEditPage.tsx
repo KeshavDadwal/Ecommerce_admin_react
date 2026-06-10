@@ -21,6 +21,19 @@ const GET_CATEGORIES = gql`
   }
 `;
 
+const GET_BRANDS = gql`
+  query GetBrandsForEdit {
+    brands(pagination: { first: 200 }) {
+      edges {
+        node {
+          id
+          name
+        }
+      }
+    }
+  }
+`;
+
 // ── images added to the variant fragment ────────────────────────────────────
 const GET_PRODUCT = gql`
   query GetProduct($id: ID!) {
@@ -29,6 +42,7 @@ const GET_PRODUCT = gql`
       name
       description
       brand
+      brandId
       categories {
         id
         name
@@ -272,7 +286,7 @@ export const ProductEditPage = () => {
     slug: "",
     description: "",
     shortDescription: "",
-    brand: "",
+    brandId: "",
     tags: "",
     status: "active",
     categoryIds: [] as string[],
@@ -292,6 +306,10 @@ export const ProductEditPage = () => {
   const { data: categoriesData } = useQuery(GET_CATEGORIES);
   const categories =
     (categoriesData as any)?.categories?.edges?.map((e: any) => e.node) ?? [];
+
+  const { data: brandsData } = useQuery(GET_BRANDS);
+  const brands =
+    (brandsData as any)?.brands?.edges?.map((e: any) => e.node) ?? [];
 
   const [updateProduct] = useMutation(UPDATE_PRODUCT, {
     refetchQueries: ["GetProducts", "GetProduct"],
@@ -314,7 +332,7 @@ export const ProductEditPage = () => {
       slug: p.name ? p.name.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") : "",
       description: p.description ?? "",
       shortDescription: "",
-      brand: p.brand ?? "",
+      brandId: p.brandId ?? "",
       tags: "",
       status: "active",
       categoryIds: (p.categories ?? []).map((c: any) => c.id),
@@ -436,7 +454,7 @@ export const ProductEditPage = () => {
             slug: form.slug.trim() || toSlug(form.name.trim()),
             description: form.description.trim() || " ",
             ...(form.shortDescription.trim() ? { shortDescription: form.shortDescription.trim() } : {}),
-            ...(form.brand.trim() ? { brand: form.brand.trim() } : {}),
+            ...(form.brandId ? { brandId: form.brandId } : {}),
             ...(form.tags.trim() ? { tags: form.tags.split(",").map((t) => t.trim()).filter(Boolean) } : {}),
             ...(form.attributes.trim() ? { attributes: form.attributes.trim() } : {}),
             status: form.status,
@@ -898,11 +916,16 @@ export const ProductEditPage = () => {
               {/* Brand */}
               <div className="space-y-1.5">
                 <label className="text-sm font-medium text-gray-700">Brand</label>
-                <Input
-                  value={form.brand}
-                  onChange={handleChange("brand")}
-                  placeholder="Can't be pre-filled — enter to update"
-                />
+                <select
+                  value={form.brandId}
+                  onChange={handleChange("brandId")}
+                  className="w-full rounded-md border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                >
+                  <option value="">None</option>
+                  {brands.map((b: any) => (
+                    <option key={b.id} value={b.id}>{b.name}</option>
+                  ))}
+                </select>
               </div>
 
               {/* Tags */}
